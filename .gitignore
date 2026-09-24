@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+*.egg-info/
+
+# Caches de dépendances (remplis une fois hors ligne : make wheels, make debs, cargo vendor)
+wheels/
+debs/
+rust/vendor/
+rust/target/
+web/node_modules/
+web/tsconfig.tsbuildinfo
+
+# Spectateur compilé (make front)
+champ_dhonneur/server/web/
+
+# Données produites : entraînements, parties, modèles
+runs/
+data/
+modeles/*.pt

@@ -1,0 +1,22 @@
+[Jeu "Champ d'honneur"]
+[Mode "2J"]
+[Graine "21"]
+[Initiative "0"]
+[Unites0 "S P X H"]
+[Unites1 "A C L E"]
+[Resultat "1-0"]
+[Blanc "glouton"]
+[Noir "mcts"]
+
+1. S@e1 E@f5 P@b1 C@c6 $H{*} I{A}
+2. Ef5-f4 Pb1-b2 L@f5 X@b1 Cc6-b5 $S{H}
+3. A@c6 Se1-f1 Lf5-e5 H@e1 $C{*} Xb1-c2
+4. Ef4-g3 He1:f2 Le5-e4 Hf2^ Ac6-c5 Pb2-a2
+5. Cb5-b4 Xc2-c3 Cb4^ S+f1 $L{*} $S{*}
+6. Le4^ Hf2:f4 Cb4:c4xc3 S+f1 Cc4-c3 $X{S}
+7. Le4-d4 Pa2^ A+c5 Hf4xg3 $C{*} X@f2
+8. Cc3^ Xf2:xd4 E@b2 Hf4-g3 C+c3 $S{*}
+9. Cc3:b3xa2 Hg3^ L@b4 P@a2 $E{*} S+f1
+10. C+b3 Hg3:e4 $L{L} X+f2 $E{*} S+f1
+11. Eb2-b1 He4^
+1-0

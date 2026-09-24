@@ -1,0 +1,116 @@
+"""Bot IA : réseau entraîné par auto-jeu + recherche Gumbel IS-MCTS.
+
+Spécification (via make_bot) :
+    ia                       modèle par défaut, 200 simulations
+    ia:800                   800 simulations
+    ia:t=2                   ~2 secondes par décision
+    ia:modele=runs/x/modeles/meilleur.pt,sims=400,dispositif=cuda
+    heur:200                 même recherche, évaluée par l'heuristique (sans réseau)
+
+Le modèle par défaut est cherché dans $CHAMP_MODELE, puis modeles/meilleur.pt,
+puis runs/continu/modeles/meilleur.pt et runs/principal/modeles/meilleur.pt.
+Le dispositif par défaut est $CHAMP_DISPOSITIF (cpu si absent).
+"""
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+
+from ..engine import Action, Game
+from .base import Bot
+
+DEFAUTS = ["modeles/meilleur.pt", "runs/continu/modeles/meilleur.pt", "runs/principal/modeles/meilleur.pt"]
+_CACHE: dict[tuple, object] = {}
+
+
+def modele_par_defaut() -> str | None:
+    env = os.environ.get("CHAMP_MODELE")
+    if env and Path(env).exists():
+        return env
+    for c in DEFAUTS:
+        if Path(c).exists():
+            return c
+    return None
+
+
+class NeuralBot(Bot):
+    name = "ia"
+
+    def __init__(self, modele: str | None = None, simulations: int = 200,
+                 temps: float | None = None, dispositif: str | None = None, heuristique: bool = False,
+                 seed: int | None = None):
+        super().__init__(seed)
+        from ..ia.recherche import ParamsRecherche, RechercheGumbel
+        self.simulations, self.temps = simulations, temps
+        dispositif = dispositif or os.environ.get("CHAMP_DISPOSITIF", "cpu")
+        if heuristique:
+            from ..ia.evaluateurs import EvaluateurHeuristique
+            self.ev = EvaluateurHeuristique()
+            self.name = "heur"
+            par = 1
+        else:
+            chemin = modele or modele_par_defaut()
+            if chemin is None:
+                raise FileNotFoundError(
+                    "Aucun modèle entraîné trouvé : lancez « champ entrainer » ou "
+                    "définissez CHAMP_MODELE=chemin/vers/meilleur.pt")
+            # la date du fichier fait partie de la clé : un modèle remplacé sur disque (entraînement
+            # continu qui publie un nouveau meilleur.pt) est rechargé à la partie suivante
+            chemin_abs = str(Path(chemin).resolve())
+            cle = (chemin_abs, dispositif, os.path.getmtime(chemin))
+            if cle not in _CACHE:
+                from ..ia.evaluateurs import EvaluateurReseau
+                for ancienne in [k for k in _CACHE if k[:2] == cle[:2]]:
+                    del _CACHE[ancienne]
+                _CACHE[cle] = EvaluateurReseau.depuis_fichier(chemin, dispositif)
+            self.ev = _CACHE[cle]
+            par = 8   # vagues de 8 simulations : lots plus efficaces pour le réseau
+        self.recherche = RechercheGumbel(ParamsRecherche(simulations=simulations, m=32, bruit=False,
+                                                         parallele=par), seed=seed)
+        self.derniere = None
+
+    def choose(self, game: Game) -> Action:
+        from ..ia.recherche import executer
+        legal = game.legal_actions()
+        if len(legal) == 1:
+            return legal[0]
+        sims = self.simulations
+        if self.temps:
+            # calibrage : estimation du coût d'une simulation lors du coup précédent
+            cout = getattr(self, "_cout", None)
+            sims = max(16, int(self.temps / cout)) if cout else 64
+        t0 = time.time()
+        res = executer([self.recherche.generateur(game, sims)], self.ev)[0]
+        if res.simulations:
+            self._cout = (time.time() - t0) / res.simulations
+        self.derniere = res
+        return res.action
+
+    def analyse(self, top: int = 5) -> list[tuple[Action, float, float, float]]:
+        """(action, probabilité π', Q, visites) des meilleures actions de la dernière recherche."""
+        r = self.derniere
+        if r is None:
+            return []
+        order = sorted(range(len(r.legal)), key=lambda i: -r.politique[i])[:top]
+        return [(r.legal[i], float(r.politique[i]), float(r.q[i]), float(r.visites[i])) for i in order]
+
+
+def depuis_spec(arg: str, seed: int | None, heuristique: bool = False) -> NeuralBot:
+    kw: dict = {}
+    for part in filter(None, arg.split(",")):
+        if "=" not in part:
+            kw["simulations"] = int(part)
+            continue
+        k, v = part.split("=", 1)
+        if k in ("sims", "simulations"):
+            kw["simulations"] = int(v)
+        elif k in ("t", "temps"):
+            kw["temps"] = float(v)
+        elif k in ("modele", "model"):
+            kw["modele"] = v
+        elif k in ("dispositif", "device"):
+            kw["dispositif"] = v
+        else:
+            raise ValueError(f"Option de bot IA inconnue : {k}")
+    return NeuralBot(heuristique=heuristique, seed=seed, **kw)

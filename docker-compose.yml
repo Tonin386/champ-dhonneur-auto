@@ -1,0 +1,121 @@
+# Préalable (une seule fois) : make wheels   -> met en cache les dépendances dans ./wheels
+#
+# docker compose up web                          -> interface web sur http://localhost:8090
+# docker compose --profile ia up web-ia          -> interface web avec le bot IA et le spectateur
+# docker compose --profile continu up -d         -> entraînement sans fin en arrière-plan + web
+#                                                   (spectateur des parties : http://localhost:8090)
+# docker compose run --rm console                -> partie en console contre le bot MCTS
+# docker compose run --rm arene                  -> tournoi de bots, relevés dans ./data/parties
+# docker compose run --rm banc                   -> mesure le matériel, recommande le nombre de processus
+# docker compose run --rm entrainement           -> apprentissage par renforcement sur GPU (./runs)
+#   (configuration : CHAMP_CONFIG=configs/gpu.json docker compose run --rm entrainement)
+# docker compose run --rm evaluation             -> match du meilleur modèle contre le bot MCTS
+# docker compose build test                      -> construit l'image en exécutant les tests
+x-build-runtime: &build-runtime
+  context: .
+  target: runtime
+  additional_contexts: { wheels: ./wheels }
+
+x-build-ia: &build-ia
+  context: .
+  target: ia
+  additional_contexts: { wheels: ./wheels, debs: ./debs }
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+# les fichiers écrits dans ./runs appartiennent à l'utilisateur de l'hôte (et non à root)
+x-utilisateur: &utilisateur
+  user: "${CHAMP_UID:-1000}:${CHAMP_GID:-1000}"
+  environment:
+    HOME: /tmp
+
+services:
+  web:
+    build: *build-runtime
+    image: champ-dhonneur:latest
+    ports: ["8090:8000"]
+    volumes: ["./runs:/app/runs:ro"]
+    profiles: ["web"]   # « docker compose up web » ; hors du profil continu (même port que web-ia)
+    restart: unless-stopped
+
+  web-ia:
+    build: *build-ia
+    image: champ-dhonneur-ia:latest
+    <<: *gpu
+    ports: ["8090:8000"]
+    volumes: ["./modeles:/app/modeles:ro", "./runs:/app/runs:ro"]
+    environment:
+      # le bot IA suit le meilleur modèle de l'entraînement continu (rechargé dès qu'il change),
+      # à défaut ./modeles/meilleur.pt puis runs/principal/modeles/meilleur.pt
+      CHAMP_MODELE: /app/runs/continu/modeles/meilleur.pt
+      CHAMP_DISPOSITIF: cuda
+    profiles: ["ia", "continu"]
+    restart: unless-stopped
+
+  entrainement-continu:
+    image: champ-dhonneur-ia:latest
+    build: *build-ia
+    <<: [*gpu, *utilisateur]
+    init: true
+    shm_size: "8gb"
+    volumes: ["./runs:/app/runs", "./configs:/app/configs:ro"]
+    # reprise automatique : relancé après un arrêt, un plantage ou un redémarrage de la machine
+    command: ["champ", "entrainer", "--config", "${CHAMP_CONFIG_CONTINU:-configs/continu.json}"]
+    profiles: ["continu"]
+    restart: unless-stopped
+
+  console:
+    image: champ-dhonneur:latest
+    build: *build-runtime
+    stdin_open: true
+    tty: true
+    command: ["champ", "jouer", "--blanc", "humain", "--noir", "mcts", "--unites", "premiere"]
+    profiles: ["console"]
+
+  arene:
+    image: champ-dhonneur:latest
+    build: *build-runtime
+    user: "${CHAMP_UID:-1000}:${CHAMP_GID:-1000}"
+    volumes: ["./data:/data"]
+    command: ["champ", "arene", "mcts", "glouton", "--parties", "50", "--dossier", "/data/parties"]
+    profiles: ["arene"]
+
+  entrainement:
+    image: champ-dhonneur-ia:latest
+    build: *build-ia
+    <<: [*gpu, *utilisateur]
+    init: true
+    shm_size: "8gb"
+    volumes: ["./runs:/app/runs", "./configs:/app/configs:ro"]
+    command: ["champ", "entrainer", "--config", "${CHAMP_CONFIG:-configs/rtx-a5000-laptop.json}"]
+    profiles: ["ia"]
+
+  banc:
+    image: champ-dhonneur-ia:latest
+    build: *build-ia
+    <<: [*gpu, *utilisateur]
+    shm_size: "8gb"
+    volumes: ["./configs:/app/configs:ro"]
+    command: ["champ", "banc", "--config", "${CHAMP_CONFIG:-configs/rtx-a5000-laptop.json}"]
+    profiles: ["ia"]
+
+  evaluation:
+    image: champ-dhonneur-ia:latest
+    build: *build-ia
+    <<: [*gpu, *utilisateur]
+    shm_size: "8gb"
+    volumes: ["./runs:/app/runs"]
+    command: ["champ", "evaluer", "${CHAMP_EVAL_MODELE:-runs/continu/modeles/meilleur.pt}", "mcts:800",
+              "--paires", "50", "--simulations", "400", "--dispositif", "cuda", "--travailleurs", "6"]
+    profiles: ["ia"]
+
+  test:
+    build:
+      context: .
+      target: test
+      additional_contexts: { wheels: ./wheels }
+    profiles: ["test"]

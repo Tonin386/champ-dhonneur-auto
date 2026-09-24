@@ -1,0 +1,44 @@
+{
+ "_commentaire": "GPU de bureau générique (≥ 12 Go). Pour la RTX A5000 Laptop, voir rtx-a5000-laptop.json. Calibrer avec champ banc.",
+ "dossier": "runs/principal",
+ "iterations": 400,
+ "travailleurs": -1,
+ "parties_par_iteration": 2048,
+ "amorce_iterations": 2,
+ "amorce_simulations": 48,
+ "autojeu": {
+  "simulations": 96,
+  "simulations_rapides": 24,
+  "p_complete": 0.25,
+  "max_manches": 100,
+  "simultanees": 96,
+  "m": 16,
+  "parallele": 1
+ },
+ "modele": {
+  "d": 256,
+  "couches": 8,
+  "tetes": 8,
+  "ffn": 4
+ },
+ "lot": 1024,
+ "lr": 0.001,
+ "lr_min": 5e-05,
+ "echauffement": 500,
+ "poids_decroissance": 0.0001,
+ "fenetre": 1500000,
+ "fenetre_min": 40000,
+ "reutilisation": 4.0,
+ "melange_q": 0.25,
+ "dispositif": "cuda",
+ "dispositif_autojeu": "cuda",
+ "compiler": false,
+ "eval_tous": 5,
+ "eval_paires": 32,
+ "eval_simulations": 128,
+ "amorce_pas": 3000,
+ "eval_ancres": [
+  "glouton",
+  "heur:64"
+ ]
+}

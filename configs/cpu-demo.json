@@ -1,0 +1,30 @@
+{
+ "dossier": "runs/demo",
+ "iterations": 60,
+ "travailleurs": 1,
+ "parties_par_iteration": 32,
+ "amorce_iterations": 2,
+ "amorce_simulations": 24,
+ "autojeu": {
+  "simulations": 32,
+  "simulations_rapides": 8,
+  "p_complete": 0.25,
+  "max_manches": 60,
+  "simultanees": 32,
+  "m": 12
+ },
+ "modele": {
+  "d": 64,
+  "couches": 3,
+  "tetes": 4
+ },
+ "lot": 256,
+ "lr": 0.002,
+ "fenetre": 60000,
+ "fenetre_min": 2000,
+ "reutilisation": 4.0,
+ "eval_tous": 2,
+ "eval_paires": 8,
+ "eval_simulations": 32,
+ "amorce_pas": 600
+}

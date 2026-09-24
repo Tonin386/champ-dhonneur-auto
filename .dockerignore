@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+runs/
+modeles/
+wheels/
+debs/
+build/
+*.egg-info/
+.git/
+rust/target/
+web/

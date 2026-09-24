@@ -1,0 +1,26 @@
+Entraînement de démonstration : configs/cpu-demo.json, 1 cœur CPU, sans GPU (10 itérations, ~1 h).
+Réseau de 0,2 M paramètres, 32 parties par itération : régime de très petites données.
+
+Entraînement runs/demo — 10 itérations
+   it parties nulles manches exemples    pol    val  préc préc*  part./h    Elo
+    1      32     0%    12.9     2443  2.474  0.873  0.51   nan     2376       
+    2      32     0%    12.2     2303  1.721  0.617  0.63   nan     2601   -178
+    3      32     0%    14.9      714  1.653  0.550  0.75  0.63     4298       
+    4      32     3%    15.8      722  1.676  0.532  0.83  0.64     4038   -268
+    5      32     0%    12.5      582  1.715  0.504  0.84  0.64     5111       
+    6      32     0%    13.8      619  1.742  0.513  0.83  0.55     4682   -180
+    7      32     0%    13.8      660  1.736  0.510  0.83  0.53     4804       
+    8      32     0%    16.2      731  1.737  0.534  0.80  0.47     3901   -132
+    9      32     0%    15.4      751  1.770  0.526  0.80  0.64     3891       
+   10      32     0%    15.6      743  1.780  0.532  0.79  0.59     4104   -278
+préc = précision de valeur sur les exemples d'apprentissage ; préc* = sur des parties inédites (écart important = sur-apprentissage)
+
+Classement Elo (glouton = 0) :
+  glouton               +0
+  iter_0002            -89
+  iter_0008           -172
+  iter_0006           -196
+  iter_0004           -234
+  iter_0010           -278
+
+Meilleur modèle : iter_0002 → runs/demo/modeles/meilleur.pt

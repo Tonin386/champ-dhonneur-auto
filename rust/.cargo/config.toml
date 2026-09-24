@@ -1,0 +1,6 @@
+# Dépendances en cache local (rust/vendor, rempli par « cargo vendor ») : construction hors ligne.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Champ d'honneur</title>
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Uncial+Antiqua&family=Alegreya+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --felt:#1e3f33; --felt-deep:#16302a; --oak:#7a4e2d; --oak-light:#a8764a;
+  --parch:#efe4c8; --parch-2:#e3d4ae; --ink:#2b2418; --muted:#6e604a;
+  --loc:#6f9a5b; --blanc:#f5ecd4; --blanc-edge:#b88a2e; --blanc-ink:#5d4210;
+  --noir:#22313a; --noir-edge:#7d97a2; --noir-ink:#e8eef0;
+  --pick:#f2c14e; --target:#3fa7a0; --danger:#b8412c;
+  --display:"Uncial Antiqua", "Luminari", Georgia, serif;
+  --text:"Alegreya Sans", "Gill Sans", "Segoe UI", system-ui, sans-serif;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%}
+body{background:var(--felt);color:var(--ink);font:16px/1.45 var(--text)}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:12px 20px;background:var(--felt-deep);color:var(--parch)}
+h1{font:400 28px/1 var(--display);margin:0 12px 0 0;letter-spacing:.5px;display:flex;align-items:center;gap:10px}
+h1 img{height:40px;width:auto}
+.setup{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:end}
+.setup label{display:flex;flex-direction:column;font-size:13px;color:#cdbf9c;gap:2px}
+select,input,button{font:inherit;font-size:14px}
+select,input{background:var(--parch);border:1px solid var(--oak);border-radius:4px;padding:4px 6px;color:var(--ink)}
+button{cursor:pointer;border-radius:4px;border:1px solid var(--oak);background:var(--parch);color:var(--ink);padding:5px 10px}
+a.btn{border-radius:4px;border:1px solid var(--oak);background:var(--parch);color:var(--ink);padding:5px 10px;font-size:14px;text-decoration:none}
+button.primary{background:var(--pick);border-color:#b58a1c;font-weight:700}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--pick);outline-offset:1px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16px;max-width:1500px;margin:0 auto}
+@media (max-width:980px){main{grid-template-columns:1fr}}
+.board-wrap{align-self:start;position:sticky;top:16px;background:var(--oak) url(img/bois.png) repeat;border-radius:10px;padding:14px;box-shadow:inset 0 0 0 3px var(--oak-light)}
+#board{width:100%;height:auto;display:block}
+.hex{fill:var(--parch);stroke:var(--oak);stroke-width:1.5}
+.hex.loc{fill:#e9dfbf}
+.hex.target{fill:#cfe7e3;stroke:var(--target);stroke-width:3}
+.hex.source{stroke:var(--pick);stroke-width:3.5}
+.hex.last{fill:#f4dba0}
+.cell{cursor:default}
+.cell.clickable{cursor:pointer}
+.coord{font:600 9px var(--text);fill:#8a7a58;pointer-events:none;text-anchor:middle;paint-order:stroke;stroke:var(--parch);stroke-width:2.5px}
+.tag{font:700 9px var(--text);pointer-events:none;dominant-baseline:central;text-anchor:middle}
+.badge{font:700 11px var(--text);pointer-events:none;dominant-baseline:central;text-anchor:middle;fill:#fff}
+aside{display:flex;flex-direction:column;gap:12px}
+@media (min-width:981px){aside{max-height:calc(100vh - 110px);overflow:auto;position:sticky;top:16px;padding-right:4px}}
+.units.compact{display:none}
+.panel{background:var(--parch);border-radius:8px;padding:12px 14px}
+.panel h2{font:400 18px var(--display);margin:0 0 6px}
+#status .turn{font-weight:700;font-size:17px}
+#status .prompt{margin-top:6px;padding:6px 8px;background:#fff6d8;border-left:4px solid var(--pick)}
+#status .result{margin-top:6px;font-size:20px;font-family:var(--display)}
+.player{border-left:6px solid var(--blanc-edge);padding-left:10px}
+.player.noir{border-left-color:var(--noir)}
+.player .head{display:flex;justify-content:space-between;align-items:baseline}
+.player .name{font-weight:700;display:flex;align-items:center;gap:6px}
+.player .name img{width:26px;height:26px}
+.init{font-size:11px;font-weight:700;background:var(--pick);border-radius:8px;padding:1px 7px}
+.player .meta{font-size:13px;color:var(--muted)}
+.coins{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.coin{position:relative;flex:none;width:46px;height:46px;border-radius:50%;padding:0;border:2px solid var(--blanc-edge);background:#4b4850 center/cover no-repeat}
+.noir .coin{border-color:var(--noir-edge)}
+button.coin:not(:disabled):hover{transform:translateY(-2px)}
+.coin .l{position:absolute;right:-5px;bottom:-5px;min-width:18px;height:18px;border-radius:9px;padding:0 3px;font:700 11px/16px var(--text);text-align:center;background:var(--blanc);color:var(--blanc-ink);border:1px solid var(--blanc-edge)}
+.noir .coin .l{background:var(--noir);color:var(--noir-ink);border-color:var(--noir-edge)}
+.coin.small{width:28px;height:28px;border-width:1.5px}
+.coin.small .l{min-width:13px;height:13px;right:-4px;bottom:-4px;font-size:9px;line-height:11px;padding:0 2px}
+.coin.out{opacity:.35}
+.coin.sel{box-shadow:0 0 0 3px var(--pick)}
+.coin.hidden{background-image:url(img/pieces/dos.png)}
+.stock{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:13px;color:var(--muted);margin-top:6px}
+.stock .grp{display:flex;align-items:center;gap:4px}
+.stock .grp>b{font-weight:500;margin-right:2px}
+.stock .bag{width:22px;height:28px}
+.units{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}
+.card{padding:0;border:0;background:none;color:var(--ink);font-size:12px;line-height:1.2;text-align:center}
+.card img{display:block;width:100%;aspect-ratio:250/349;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+@media (prefers-reduced-motion:no-preference){.card img,button.coin{transition:transform .15s}}
+.card:hover img{transform:translateY(-3px)}
+.card span{display:block;margin-top:3px}
+dialog{border:0;border-radius:10px;background:var(--parch);color:var(--ink);padding:16px 20px;width:min(760px,94vw);max-height:90vh;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+dialog::backdrop{background:rgba(10,22,18,.65)}
+dialog h2{font:400 22px var(--display);margin:0}
+.dlg-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.carte-d{display:grid;grid-template-columns:250px 1fr;gap:18px;align-items:start}
+.carte-d img{width:100%;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.carte-d p{margin:0 0 10px}
+@media (max-width:600px){.carte-d{grid-template-columns:1fr}.carte-d img{max-width:250px;margin:0 auto}}
+.regles figure{margin:0 0 18px}
+.regles img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
+.regles figcaption{font-size:14px;color:var(--muted);margin-top:6px}
+#actions .list{display:flex;flex-direction:column;gap:4px;max-height:320px;overflow:auto;margin-top:6px}
+#actions .act{text-align:left;display:grid;grid-template-columns:110px 1fr;gap:8px;background:#f8f1dd;border-color:#d2c29a}
+#actions .act:hover,#actions .act:focus-visible{background:#fff4cf}
+#actions .act code{font:600 14px ui-monospace,Menlo,Consolas,monospace;color:#3d3222}
+#actions .act span{font-size:13px}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+#notation{flex:1;min-width:120px;font-family:ui-monospace,Menlo,Consolas,monospace}
+#log pre{white-space:pre-wrap;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;max-height:200px;overflow:auto;margin:6px 0 0}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--danger);color:#fff;padding:8px 14px;border-radius:6px;display:none;max-width:90vw}
+.hint{font-size:13px;color:var(--muted)}
+@media (prefers-reduced-motion:no-preference){.unit-g{transition:transform .25s}}
+</style>
+</head>
+<body>
+<header>
+  <h1><img src="img/embleme.png" alt="">Champ d'honneur</h1>
+  <form class="setup" id="setup">
+    <label>Plateau<select id="mode"><option value="2J">2 joueurs</option><option value="4J">4 joueurs</option></select></label>
+    <label>Unités<select id="unites">
+      <option value="premiere">Première partie</option><option value="aleatoire">Au hasard</option>
+      <option value="NHPK/CFMG">Gaugamèles</option><option value="ACLF/HPRS">Bannockburn</option><option value="ADNG/CXLE">Crécy</option>
+    </select></label>
+    <label id="lab-r0">Blanc<select class="role" data-i="0"></select></label>
+    <label id="lab-r1">Noir<select class="role" data-i="1"></select></label>
+    <label class="r4" hidden>J3 Blanc<select class="role" data-i="2"></select></label>
+    <label class="r4" hidden>J4 Noir<select class="role" data-i="3"></select></label>
+    <label>Graine<input id="graine" type="number" placeholder="au hasard" style="width:110px"></label>
+    <button class="primary" type="submit">Nouvelle partie</button>
+    <a class="btn" href="/">Suivi de l'entraînement</a>
+    <button type="button" id="aide">Règles illustrées</button>
+  </form>
+</header>
+<main>
+  <section class="board-wrap"><svg id="board" role="img" aria-label="Plateau de jeu"></svg></section>
+  <aside>
+    <div class="panel" id="status"></div>
+    <div id="players"></div>
+    <div class="panel" id="actions">
+      <h2>Vos coups</h2>
+      <div class="hint" id="filter-hint">Choisissez une pièce de votre main, puis une case en surbrillance.</div>
+      <div class="list" id="act-list"></div>
+      <form class="row" id="nform" style="margin-top:8px">
+        <input id="notation" placeholder="ou tapez un coup : S@b1, Sb1-b2…" autocomplete="off" aria-label="Coup en notation">
+        <button type="submit">Jouer</button>
+      </form>
+      <div class="row" style="margin-top:8px">
+        <button id="undo" type="button">Annuler mon coup</button>
+        <button id="dl" type="button">Relevé complet</button>
+        <button id="auto" type="button" hidden>Lecture</button>
+        <button id="conseil" type="button" hidden>Conseil IA</button>
+      </div>
+      <pre id="analyse" class="hint" style="white-space:pre-wrap;font-size:12px;margin-top:8px" hidden></pre>
+    </div>
+    <div class="panel" id="log"><h2>Relevé</h2><pre id="moves"></pre></div>
+  </aside>
+</main>
+<div id="toast" role="alert"></div>
+<dialog id="carte">
+  <div class="dlg-head"><h2 id="carte-titre"></h2><button type="button" data-close>Fermer</button></div>
+  <div class="carte-d"><img id="carte-img" alt=""><div id="carte-texte"></div></div>
+</dialog>
+<dialog id="regles" class="regles">
+  <div class="dlg-head"><h2>Règles illustrées</h2><button type="button" data-close>Fermer</button></div>
+  <figure><img src="img/regles/setup.png" alt="Mise en place d'une partie à deux joueurs" loading="lazy">
+    <figcaption>Mise en place : le plateau, les cartes Unité et la réserve de chaque joueur, le sac, la main, la défausse et le marqueur d'initiative.</figcaption></figure>
+  <figure><img src="img/regles/howToWin.jpg" alt="Lieux contrôlés par les deux joueurs" loading="lazy">
+    <figcaption>Victoire : chaque marqueur Contrôle posé sur un lieu le revendique. Le premier qui pose son dernier marqueur gagne aussitôt.</figcaption></figure>
+  <figure><img src="img/regles/move.png" alt="Déplacements possibles d'une unité" loading="lazy">
+    <figcaption>Déplacer : une unité avance d'une case vers une case adjacente libre ; les cases occupées sont bloquées.</figcaption></figure>
+  <figure><img src="img/regles/anatomy.png" alt="Anatomie d'une carte Unité" loading="lazy">
+    <figcaption>Carte Unité : nom, nombre de pièces, schéma et texte de la tactique, capacité (!) ou restriction (x). Les cartes sont en anglais ; cliquez sur une carte d'un joueur pour son texte en français.</figcaption></figure>
+</dialog>
+<script>
+let ROLES = [["humain","Humain"],["mcts","Bot MCTS"],["glouton","Bot glouton"],["aleatoire","Bot aléatoire"]];
+const TEAM = ["Blanc","Noir"];
+const NAMES = {A:"Archer",B:"Berserk",C:"Cavalerie",D:"Porte étendard",E:"Éclaireur",F:"Fantassin",G:"Garde royale",H:"Cavalerie légère",K:"Capitaine",L:"Lancier",M:"Mercenaire",N:"Chevalier",P:"Piquier",R:"Moine soldat",S:"Soldat",X:"Arbalétrier","*":"Sceau royal"};
+const pieceImg = (c, team) => c === "*" ? `img/pieces/sceau-${team ? "noir" : "blanc"}.png` : `img/pieces/${c}.png`;
+const coin = (c, team, cls = "") => `<span class="coin small${cls}" title="${NAMES[c]}" style="background-image:url(${pieceImg(c, team)})"><span class="l">${c}</span></span>`;
+let gid = null, S = null, selCoin = null, selCell = null, autoTimer = null;
+const $ = s => document.querySelector(s);
+
+function fillRoles(){
+  const best = ROLES[1][0];
+  document.querySelectorAll(".role").forEach((sel, k) => {
+    sel.innerHTML = "";
+    ROLES.forEach(([v, l]) => sel.add(new Option(l, v)));
+    sel.value = k === 0 ? "humain" : (k > 1 && best === "ia" ? "mcts" : best);
+  });
+}
+fillRoles();
+let HAS_IA = false;
+fetch("/api/bots").then(r => r.json()).then(d => {
+  ROLES = [["humain","Humain"], ...d.bots]; HAS_IA = !!d.modele;
+  if (!gid) fillRoles(); else render();
+}).catch(() => {});
+$("#mode").onchange = () => {
+  const four = $("#mode").value === "4J";
+  document.querySelectorAll(".r4").forEach(e => e.hidden = !four);
+  $("#lab-r0").firstChild.textContent = four ? "J1 Blanc" : "Blanc";
+  $("#lab-r1").firstChild.textContent = four ? "J2 Noir" : "Noir";
+  if (four) {
+    $("#unites").value = "aleatoire";
+    document.querySelectorAll(".role").forEach(sel => { if (["ia","heur"].includes(sel.value)) sel.value = "mcts"; });
+  }
+};
+
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none",4000); }
+
+async function api(path, body){
+  const r = await fetch(path, body === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
+
+$("#setup").onsubmit = async e => {
+  e.preventDefault();
+  stopAuto();
+  const n = $("#mode").value === "2J" ? 2 : 4;
+  const roles = [...document.querySelectorAll(".role")].slice(0, n).map(s => s.value);
+  const g = $("#graine").value;
+  try {
+    const r = await api("/api/games", {mode:$("#mode").value, unites:$("#unites").value, roles, graine: g ? +g : null});
+    gid = r.id; setState(r.state); runBots();
+  } catch(err){ toast(err.message); }
+};
+
+function setState(st){ S = st; selCoin = null; selCell = null; render(); }
+
+async function runBots(){
+  if (!S || S.done || S.human_turn) return;
+  const allBots = S.players.every(p => p.role !== "humain");
+  if (allBots) { $("#auto").hidden = false; if (!autoTimer) return; }
+  try { const st = await api(`/api/games/${gid}/bot`, {}); setState(st);
+        if (allBots && autoTimer) autoTimer = setTimeout(runBots, 350); }
+  catch(err){ toast(err.message); }
+}
+function stopAuto(){ if (autoTimer) clearTimeout(autoTimer); autoTimer = null; $("#auto").textContent = "Lecture"; }
+$("#auto").onclick = () => { if (autoTimer) stopAuto(); else { autoTimer = 1; $("#auto").textContent = "Pause"; runBots(); } };
+
+async function play(body){
+  try { const st = await api(`/api/games/${gid}/play`, body); setState(st); $("#notation").value = ""; setTimeout(runBots, 150); }
+  catch(err){ toast(err.message); }
+}
+$("#nform").onsubmit = e => { e.preventDefault(); const v = $("#notation").value.trim(); if (v && gid) play({notation:v}); };
+$("#conseil").onclick = async () => {
+  if (!gid) return;
+  const box = $("#analyse"); box.hidden = false; box.textContent = "L'IA réfléchit…";
+  try {
+    const r = await api(`/api/games/${gid}/analyse`, {});
+    const lines = [];
+    if (r.valeur !== null && r.valeur !== undefined)
+      lines.push(`Évaluation : ${r.valeur >= 0 ? "+" : ""}${r.valeur.toFixed(2)} (≈ ${Math.round(50 * (1 + r.valeur))} % de gain)`);
+    r.coups.forEach((c, i) => lines.push(`${i + 1}. ${c.coup.padEnd(14)} ${(100 * c.probabilite).toFixed(0).padStart(3)} %  ${c.description}`));
+    box.textContent = lines.join("\n") || "Aucun coup.";
+  } catch(err){ box.textContent = ""; box.hidden = true; toast(err.message); }
+};
+$("#undo").onclick = async () => { if (!gid) return; try { setState(await api(`/api/games/${gid}/undo`, {})); } catch(err){ toast(err.message); } };
+$("#dl").onclick = async () => {
+  if (!gid) return;
+  const t = await (await fetch(`/api/games/${gid}/record?complet=true`)).text();
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([t], {type:"text/plain"}));
+  a.download = `champ-${S.seed}.nch`; a.click();
+};
+
+function filtered(){
+  let L = S.legal;
+  if (selCoin !== null) L = L.filter(a => a.coin === selCoin);
+  if (selCell !== null) L = L.filter(a => a.cells.includes(selCell));
+  return L;
+}
+
+function render(){
+  const humanTurn = S && !S.done && S.human_turn && S.mode === "2J";
+  $("#conseil").hidden = !(HAS_IA && humanTurn);
+  $("#analyse").hidden = true;
+  renderBoard(); renderStatus(); renderPlayers(); renderActions(); $("#moves").textContent = S.moves; const m=$("#moves"); m.scrollTop = m.scrollHeight; }
+
+function renderStatus(){
+  const p = S.players[S.to_move];
+  const who = S.mode === "4J" ? `J${p.idx+1} ${TEAM[p.team]}` : TEAM[p.team];
+  let h = `<div class="turn">Manche ${S.round} — ${S.done ? "partie terminée" : "à " + who + " de jouer"}</div>`;
+  h += `<div class="hint">Marqueurs restant à placer : Blanc ${S.markers_left[0]}, Noir ${S.markers_left[1]}</div>`;
+  if (S.last.length) h += `<div class="hint">Dernier coup : ${S.last.join(", ")}</div>`;
+  if (S.pending && !S.done) h += `<div class="prompt">${S.pending}${S.pending_coin ? " : <b>" + NAMES[S.pending_coin] + "</b>" : ""}</div>`;
+  if (S.done) h += `<div class="result">${S.winner === null ? "Partie nulle" : `<img src="img/controle-${S.winner ? "noir" : "blanc"}.png" alt="" width="34" height="34" style="vertical-align:-9px"> Victoire de ${TEAM[S.winner]}`}</div>`;
+  $("#status").innerHTML = h;
+}
+
+function renderPlayers(){
+  const box = $("#players"); box.innerHTML = "";
+  for (const p of S.players){
+    const d = document.createElement("div");
+    d.className = "panel player " + (p.team ? "noir" : "blanc");
+    const title = S.mode === "4J" ? `J${p.idx+1} ${TEAM[p.team]}` : TEAM[p.team];
+    const role = ROLES.find(r => r[0] === p.role.split(":")[0]);
+    let h = `<div class="head"><span class="name"><img src="${pieceImg("*", p.team)}" alt="">${title}${p.initiative ? `<span class="init">Initiative</span>` : ""}</span><span class="meta">${role ? role[1] : p.role}</span></div>`;
+    h += `<div class="coins" aria-label="Main">`;
+    if (p.hand) for (const c of p.hand){
+      const active = S.human_turn && S.to_move === p.idx && !S.pending;
+      h += `<button class="coin${selCoin === c && active ? " sel" : ""}" data-coin="${c}" ${active ? "" : "disabled"} title="${NAMES[c]}" aria-label="${NAMES[c]}" style="background-image:url(${pieceImg(c, p.team)})"><span class="l">${c}</span></button>`;
+    } else for (let k = 0; k < p.hand_count; k++) h += `<span class="coin hidden" role="img" aria-label="pièce cachée"></span>`;
+    h += `</div>`;
+    h += `<div class="stock"><span class="grp" title="Pièces dans le sac"><img class="bag" src="img/sac.png" alt="Sac">×${p.bag}</span>`;
+    h += `<span class="grp" title="Défausse face cachée"><span class="coin small hidden"></span>×${p.disc_down}</span>`;
+    h += `<span class="grp"><b>Défausse</b>${p.disc_up.map(c => coin(c, p.team)).join("") || "—"}</span></div>`;
+    h += `<div class="stock"><span class="grp"><b>Réserve</b>${Object.entries(p.reserve).map(([u, n]) => `${coin(u, p.team, n ? "" : " out")}×${n}`).join(" ")}</span></div>`;
+    h += `<div class="units${S.mode === "4J" ? " compact" : ""}">` + p.units.map(u => `<button type="button" class="card" data-u="${u.letter}" title="${u.name}"><img src="img/cartes/${u.letter}.jpg" alt="" loading="lazy"><span><b>${u.letter}</b> ${u.name}</span></button>`).join("") + `</div>`;
+    d.innerHTML = h;
+    box.appendChild(d);
+  }
+  box.querySelectorAll("button.coin").forEach(b => b.onclick = () => {
+    selCoin = selCoin === b.dataset.coin ? null : b.dataset.coin; selCell = null; render();
+  });
+  box.querySelectorAll("button.card").forEach(b => b.onclick = () => showCard(b.dataset.u));
+}
+
+function showCard(letter){
+  const u = S.players.flatMap(p => p.units).find(u => u.letter === letter);
+  $("#carte-titre").textContent = `${u.letter} — ${u.name}`;
+  $("#carte-img").src = `img/cartes/${u.letter}.jpg`;
+  $("#carte-img").alt = `Carte ${u.name} (édition anglaise)`;
+  const ab = u.ability.replace(/^\((!|x)\)\s*/, "");
+  $("#carte-texte").innerHTML = `<p><b>Pièces :</b> ${u.count}</p>` +
+    (u.tactic ? `<p><b>Tactique :</b> ${u.tactic}</p>` : "") +
+    (u.ability ? `<p><b>${u.ability.startsWith("(x)") ? "Restriction" : "Capacité"} :</b> ${ab}</p>` : "");
+  $("#carte").showModal();
+}
+$("#aide").onclick = () => $("#regles").showModal();
+document.querySelectorAll("dialog").forEach(d => {
+  d.querySelector("[data-close]").onclick = () => d.close();
+  d.onclick = e => { if (e.target === d) d.close(); };
+});
+
+function renderActions(){
+  const list = $("#act-list"); list.innerHTML = "";
+  if (!S.human_turn){ list.innerHTML = `<div class="hint">${S.done ? "Lancez une nouvelle partie." : "Les bots réfléchissent…"}</div>`; return; }
+  const L = filtered();
+  $("#filter-hint").textContent = S.pending ? "Choisissez une option." :
+    (selCoin ? `Pièce ${NAMES[selCoin]} : ${L.length} coup(s).` : "Choisissez une pièce de votre main, puis une case en surbrillance.");
+  for (const a of L){
+    const b = document.createElement("button"); b.className = "act"; b.type = "button";
+    b.innerHTML = `<code>${a.n}</code><span>${a.desc}</span>`;
+    b.onclick = () => play({index:a.i});
+    b.onmouseenter = () => highlight(a); b.onmouseleave = () => renderBoard();
+    list.appendChild(b);
+  }
+}
+
+function hexPts(cx, cy, s){ let p = []; for (let k = 0; k < 6; k++){ const t = Math.PI / 3 * k; p.push((cx + s*Math.cos(t)).toFixed(1) + "," + (cy + s*Math.sin(t)).toFixed(1)); } return p.join(" "); }
+
+function geom(){
+  const s = S.mode === "2J" ? 40 : 34, h = Math.sqrt(3)/2*s, pad = 8;
+  return {s, h, pad, W: pad*2 + s*2 + (S.cols-1)*1.5*s, H: pad*2 + h*2 + S.max_y2*h,
+          c: cell => [pad + s + cell.x*1.5*s, pad + h + (S.max_y2 - cell.y2)*h]};
+}
+
+function renderBoard(hl){
+  const G = geom(), svg = $("#board");
+  svg.setAttribute("viewBox", `0 0 ${G.W} ${G.H}`);
+  const L = S.human_turn ? filtered() : [];
+  const targets = new Set(), sources = new Set();
+  const showTargets = S.human_turn && (selCoin !== null || S.pending);
+  if (showTargets) for (const a of L){ if (a.cells.length){ targets.add(a.cells[a.cells.length-1]); if (a.cells.length > 1) sources.add(a.cells[0]); } }
+  if (hl){ targets.clear(); sources.clear(); if (hl.cells.length){ targets.add(hl.cells[hl.cells.length-1]); hl.cells.slice(0,-1).forEach(c => sources.add(c)); } }
+  let out = "";
+  for (const c of S.cells){
+    const [x, y] = G.c(c);
+    let cls = "hex" + (c.loc ? " loc" : "") + ((S.last_cells || []).includes(c.i) ? " last" : "") + (targets.has(c.i) ? " target" : "") + (sources.has(c.i) || selCell === c.i ? " source" : "");
+    const clickable = S.human_turn && S.legal.some(a => a.cells.includes(c.i) && (selCoin === null || a.coin === selCoin));
+    out += `<g class="cell${clickable ? " clickable" : ""}" data-i="${c.i}"><polygon class="${cls}" points="${hexPts(x, y, G.s - 1)}"/>`;
+    if (c.loc){
+      const R = G.s*(c.control === null ? 0.6 : 0.72);
+      const src = c.control === null ? "img/lieu.svg" : `img/controle-${c.control ? "noir" : "blanc"}.png`;
+      out += `<image href="${src}" x="${x - R}" y="${y - R}" width="${2*R}" height="${2*R}"${c.control === null ? ' opacity=".55"' : ""}/>`;
+    }
+    if (c.unit){
+      const u = c.unit, fill = u.team ? "var(--noir)" : "var(--blanc)", edge = u.team ? "var(--noir-edge)" : "var(--blanc-edge)", ink = u.team ? "var(--noir-ink)" : "var(--blanc-ink)";
+      const r = G.s*0.52;
+      for (let k = Math.min(u.coins, 4) - 1; k > 0; k--) out += `<circle cx="${x}" cy="${y + k*2.5}" r="${r + 1.5}" fill="#4b4850" stroke="${edge}" stroke-width="1.5"/>`;
+      out += `<circle cx="${x}" cy="${y}" r="${r + 1.5}" fill="${edge}"/><image href="${pieceImg(u.type, u.team)}" x="${x - r}" y="${y - r}" width="${2*r}" height="${2*r}"/>`;
+      out += `<circle cx="${x - r*0.8}" cy="${y + r*0.8}" r="7" fill="${fill}" stroke="${edge}" stroke-width="1"/><text class="tag" x="${x - r*0.8}" y="${y + r*0.8}" fill="${ink}">${u.type}</text>`;
+      if (u.coins > 1) out += `<circle cx="${x + r*0.85}" cy="${y - r*0.85}" r="9" fill="var(--danger)"/><text class="badge" x="${x + r*0.85}" y="${y - r*0.85}">${u.coins}</text>`;
+      if (S.mode === "4J") out += `<text class="badge" x="${x - r*0.9}" y="${y - r*0.9}" style="fill:var(--ink)">${u.owner+1}</text>`;
+      out += `<title>${NAMES[u.type]} (${TEAM[u.team]}), ${u.coins} pièce(s)</title>`;
+    }
+    out += `<text class="coord" x="${x}" y="${y - G.h*0.74}">${c.name}</text></g>`;
+  }
+  svg.innerHTML = out;
+  svg.querySelectorAll("g.cell.clickable").forEach(g => g.onclick = () => clickCell(+g.dataset.i));
+}
+function highlight(a){ renderBoard(a); }
+
+function clickCell(i){
+  const cand = S.legal.filter(a => (selCoin === null || a.coin === selCoin) && a.cells.length && a.cells[a.cells.length-1] === i);
+  if ((selCoin !== null || S.pending) && cand.length === 1){ play({index:cand[0].i}); return; }
+  selCell = selCell === i ? null : i; render();
+}
+
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+ "dossier": "runs/test",
+ "iterations": 4,
+ "travailleurs": 2,
+ "parties_par_iteration": 4,
+ "amorce_iterations": 1,
+ "amorce_simulations": 8,
+ "autojeu": {
+  "simulations": 16,
+  "simulations_rapides": 4,
+  "max_manches": 25,
+  "simultanees": 4
+ },
+ "modele": {
+  "d": 64,
+  "couches": 2,
+  "tetes": 4
+ },
+ "fenetre_min": 50,
+ "lot": 32,
+ "eval_tous": 2,
+ "eval_paires": 1,
+ "eval_simulations": 8,
+ "amorce_pas": 5
+}
