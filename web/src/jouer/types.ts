@@ -31,6 +31,8 @@ export interface EtatServeur {
   legal: Legal[];
   attente: string;
   piece_attente: string | null;
+  /** draft : valeur de chaque carte disponible pour le joueur qui choisit (ia/conseil.py) */
+  conseil?: Conseil | null;
   fini: boolean;
   resultat: string;
   edite: boolean;
@@ -108,4 +110,12 @@ export interface Position {
     defausse_cachee: string[];
     reserve: Record<string, number>;
   }[];
+}
+
+export interface Conseil {
+  cartes: Record<string, { valeur: number; propre: number; ic95: number; synergie: number; contre: number }>;
+  meilleure: string;
+  iteration: number | null;
+  source: string | null;
+  joueur: number;
 }

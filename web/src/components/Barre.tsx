@@ -111,6 +111,7 @@ export function Barre() {
         <div className="bascule" role="group" aria-label="Vue">
           <button type="button" className={vue === "plateau" ? "on" : ""} onClick={() => setVue("plateau")} title="Grand plateau (P)">Plateau</button>
           <button type="button" className={vue === "mosaique" ? "on" : ""} onClick={() => setVue("mosaique")} title="Toutes les tables (M)">Mosaïque</button>
+          <button type="button" className={vue === "unites" ? "on" : ""} onClick={() => setVue("unites")} title="Valeur des unités, synergies, contres et draft (U)">Unités</button>
         </div>
         <button type="button" className={regie ? "on" : ""} onClick={basculerRegie} aria-pressed={regie}
           title="Régie automatique : enchaîne les parties en direct et les rediffusions (R)">

@@ -6,6 +6,7 @@ import { Joueur } from "./components/Joueur";
 import { Lecteur } from "./components/Lecteur";
 import { Plateau } from "./components/Plateau";
 import { Cote, Mosaique } from "./components/Tables";
+import { VueUnites } from "./components/Unites";
 import { EQUIPE, nomJoueur } from "./jeu";
 import { useStore } from "./store";
 import type { Run } from "./types";
@@ -90,6 +91,7 @@ function useClavier() {
         d: s.allerDirect,
         m: () => s.setVue(s.vue === "mosaique" ? "plateau" : "mosaique"),
         p: () => s.setVue("plateau"),
+        u: () => s.setVue(s.vue === "unites" ? "plateau" : "unites"),
         r: s.basculerRegie,
         f: () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()),
       };
@@ -191,6 +193,7 @@ export function App() {
   const tableau = useStore(s => s.tableau);
   const source = useStore(s => s.source);
   const erreur = useStore(s => s.erreur);
+  const vue = useStore(s => s.vue);
   useFlux(run);
   useMoteur();
   useClavier();
@@ -223,7 +226,7 @@ export function App() {
   return (
     <div className="ecran">
       <Barre />
-      <main className="milieu">
+      {vue === "unites" && run ? <main className="milieu-unites"><VueUnites run={run} maj={tableau?.maj ?? null} /></main> : <main className="milieu">
         <Scene />
         <div className="droite">
           <section className="panneau chronique-p" aria-label="Déroulé">
@@ -232,7 +235,7 @@ export function App() {
           </section>
           <Cote />
         </div>
-      </main>
+      </main>}
       {tableau && <footer className="bas"><Graphes t={tableau} /></footer>}
       {erreur && <div className="toast" role="alert">{erreur}</div>}
     </div>

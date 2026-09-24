@@ -22,6 +22,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from ..engine import FACE_DOWN, Action, Game
+from ..ia.conseil import conseil_draft, dossier_valeurs, lire_valeurs
 from ..notation import action_str, describe, export_record
 from ..position import depuis_position, position
 from ..units import FIRST_GAME, UNITS
@@ -232,6 +233,9 @@ def etat(s: Session, depuis: int = 0, version: int = -1) -> dict:
         "fini": g.done, "resultat": g.result_label(), "edite": s.edite,
         "mains_visibles": s.mains_visibles, "masques": sorted(masques),
     }
+    if g.in_draft:
+        d = dossier_valeurs([j.modele for j in s.joueurs] + [os.environ.get("CHAMP_MODELE")], RUNS)
+        out["conseil"] = conseil_draft(g, lire_valeurs(d) if d else None)
     if debut == 0:
         out["decor"] = s.film.decor()
     return out

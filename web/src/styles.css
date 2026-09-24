@@ -477,6 +477,91 @@ table.comptes td.faux { color: var(--attaque); font-weight: 700; }
 .lecteur .reprendre { border-color: var(--serie); }
 
 /* ---------------------------------------------------------------- écrans plus petits */
+/* ---------------------------------------------------------------- vue « Unités » */
+.milieu-unites { min-height: 0; overflow: auto; }
+.vue-unites { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); grid-template-rows: auto minmax(14rem, 1fr) auto;
+  grid-template-areas: "valeurs tuiles" "valeurs evolution" "valeurs chaleur"; gap: 0.8rem; min-height: 100%; }
+.vue-unites.vide { display: block; padding: 3rem; color: var(--texte-2); text-align: center; }
+.p-valeurs { grid-area: valeurs; overflow: auto; }
+.p-evolution { grid-area: evolution; }
+.p-chaleur { grid-area: chaleur; flex-direction: row; gap: 1rem; }
+.tuiles { grid-area: tuiles; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.6rem; }
+.tuile { cursor: help; }
+.tuile .etincelle { height: 1.6rem; margin-top: 0.2rem; }
+.vue-unites h2 { display: flex; align-items: baseline; gap: 0.6rem; }
+.vue-unites h2 .it { font: 0.85rem var(--texte-f); color: var(--texte-3); display: flex; gap: 0.5rem; align-items: baseline; }
+.vue-unites h2 .it button { font-size: 0.8rem; padding: 0.1rem 0.5rem; }
+.glossaire { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 0.8rem; margin: 0.6rem 0 0; font-size: 0.8rem; }
+.glossaire dt { font-weight: 700; color: var(--texte); }
+.glossaire dd { margin: 0; color: var(--texte-2); }
+.vue-unites .note { margin: 0.4rem 0 0; font-size: 0.8rem; color: var(--texte-3); }
+table.valeurs { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+.valeurs th { font-weight: 500; font-size: 0.78rem; color: var(--texte-2); text-align: left; padding: 0 0.3rem 0.3rem; cursor: help; white-space: nowrap; }
+.valeurs td { padding: 0.12rem 0.3rem; border-top: 1px solid #22392f; white-space: nowrap; }
+.valeurs .num { text-align: right; font-variant-numeric: tabular-nums; }
+.valeurs .val small { color: var(--texte-3); font-size: 0.75rem; }
+.valeurs tbody tr { cursor: pointer; }
+.valeurs tbody tr:hover { background: #1f3a31; }
+.valeurs tbody tr.choisie { background: #243f36; box-shadow: inset 0.2rem 0 0 var(--or); }
+.valeurs tr:focus-visible { outline: 0.15rem solid var(--or); outline-offset: -0.15rem; }
+.valeurs .icone img { width: 1.6rem; height: 1.6rem; display: block; }
+.valeurs .nom b { color: var(--or); margin-right: 0.2rem; }
+.valeurs .barre-v { width: 34%; min-width: 8rem; }
+.piste { position: relative; height: 1.1rem; }
+.piste .zero { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #4d6b60; }
+.piste .b { position: absolute; top: 0.2rem; height: 0.7rem; background: var(--serie); }
+.piste .b.pos { border-radius: 0 4px 4px 0; }
+.piste .b.neg { border-radius: 4px 0 0 4px; }
+.piste .ic { position: absolute; top: 0.5rem; height: 1px; background: var(--texte-2); }
+.etincelle { display: block; width: 6rem; height: 1.3rem; overflow: visible; }
+.etincelle polyline { fill: none; stroke: var(--serie); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.etincelle circle { fill: var(--texte); }
+.etincelle .zero { stroke: #4d6b60; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.tuile .etincelle { width: 100%; }
+.evolution { position: relative; flex: 1; min-height: 0; }
+.evolution svg { display: block; width: 100%; height: 100%; }
+.evolution .grille line { stroke: #22392f; stroke-width: 1; }
+.evolution .zero line { stroke: #4d6b60; stroke-width: 1; }
+.evolution text { font: 9px var(--texte-f); fill: var(--texte-3); text-anchor: end; }
+.evolution .borne { text-anchor: start; }
+.evolution .autre { fill: none; stroke: #3d5a50; stroke-width: 1; }
+.evolution .choisie { fill: none; stroke: var(--serie); stroke-width: 2; stroke-linejoin: round; }
+.evolution .bande { fill: var(--serie); opacity: 0.12; }
+.evolution .point { fill: var(--serie); stroke: var(--panneau); stroke-width: 2; }
+.evolution .etiquette { fill: var(--texte); font-weight: 700; text-anchor: start; font-size: 11px; }
+.evolution .curseur { stroke: var(--texte-3); stroke-width: 1; }
+.bulle-evo { position: absolute; top: 0; left: 55%; z-index: 5; min-width: 12rem; padding: 0.5rem 0.7rem; background: #0f201b;
+  border: 1px solid var(--bord); border-radius: 0.5rem; font-size: 0.78rem; pointer-events: none; }
+.bulle-evo.gauche { left: 3rem; }
+.bulle-evo .t { font-weight: 700; margin-bottom: 0.2rem; }
+.bulle-evo .ligne { display: flex; gap: 0.5rem; color: var(--texte-2); }
+.bulle-evo .ligne b { color: var(--texte); min-width: 2.8rem; text-align: right; font-variant-numeric: tabular-nums; }
+.bulle-evo .ligne.choisie { color: var(--texte); }
+.bulle-evo small { display: block; margin-top: 0.3rem; color: var(--texte-3); }
+.chaleur { flex: 1; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.chaleur figcaption { font: 400 1.05rem var(--titre); cursor: help; }
+.chaleur svg { width: 100%; max-height: 22rem; display: block; }
+.chaleur .lettre { font: 8px var(--texte-f); fill: var(--texte-3); }
+.chaleur .lettre.sel { fill: var(--or); font-weight: 700; }
+.chaleur rect.sel { stroke: var(--texte-2); stroke-width: 0.8; }
+.chaleur rect.survol { stroke: var(--texte); stroke-width: 1.2; }
+.legende-chaleur { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--texte-3); font-variant-numeric: tabular-nums; }
+.legende-chaleur .degrade { flex: 1; height: 0.5rem; border-radius: 0.25rem; background: linear-gradient(90deg, #e66767, #383835, #5598e7); }
+.chaleur .lecture { font-size: 0.8rem; color: var(--texte-2); min-height: 2.2em; }
+@media (max-width: 1200px) {
+  .vue-unites { grid-template-columns: 1fr; grid-template-rows: none; grid-template-areas: "tuiles" "valeurs" "evolution" "chaleur"; }
+  .p-evolution { min-height: 18rem; }
+  .p-chaleur { flex-direction: column; }
+  .tuiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* conseil de draft (/jouer) : valeur de chaque carte d'après la dernière mesure */
+.carte { position: relative; }
+.badge-valeur { position: absolute; top: 0.2rem; right: 0.2rem; padding: 0.05rem 0.35rem; border-radius: 0.3rem; font-size: 0.8rem;
+  font-weight: 700; background: rgba(13, 27, 23, 0.88); color: var(--texte); border: 1px solid var(--bord); font-variant-numeric: tabular-nums; }
+.badge-valeur.meilleure { background: var(--or); color: #2b2418; border-color: var(--or-2); }
+.conseil-draft { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: var(--texte-3); margin-top: 0.3rem; }
+
 @media (max-width: 1500px) {
   .kpi .det { display: none; }
   .graphe .zone { height: 4.5rem; }

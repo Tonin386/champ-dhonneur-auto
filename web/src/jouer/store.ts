@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Decor, Image } from "../types";
-import type { Analyse, EtatServeur, InfoIA, JoueurCfg, Legal, Position, Regles } from "./types";
+import type { Analyse, Conseil, EtatServeur, InfoIA, JoueurCfg, Legal, Position, Regles } from "./types";
 
 export interface Config {
   joueurs: JoueurCfg[];
@@ -35,6 +35,7 @@ interface EtatJeu {
   legal: Legal[];
   attente: string;
   pieceAttente: string | null;
+  conseil: Conseil | null;
   fini: boolean;
   resultat: string;
   edite: boolean;
@@ -132,7 +133,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     set({
       id: e.id, version: e.version, decor: e.decor ?? s.decor, images,
       joueurs: e.joueurs, trait: e.trait, humain: e.humain, ia: e.ia, legal: e.legal,
-      attente: e.attente, pieceAttente: e.piece_attente, fini: e.fini, resultat: e.resultat,
+      attente: e.attente, pieceAttente: e.piece_attente, conseil: e.conseil ?? null, fini: e.fini, resultat: e.resultat,
       edite: e.edite, mainsVisibles: e.mains_visibles, masques: e.masques, analyses,
       pos: auBout || nouvelle || s.pos >= images.length ? images.length - 1 : s.pos,
       piece: null, caseChoisie: null, survol: null, occupe: false,
@@ -154,6 +155,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     legal: [],
     attente: "",
     pieceAttente: null,
+    conseil: null,
     fini: false,
     resultat: "*",
     edite: false,

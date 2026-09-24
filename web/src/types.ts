@@ -139,3 +139,32 @@ export interface Run {
   meilleur: string | null;
   maj: number;
 }
+
+/** Valeur dynamique des unités (runs/<nom>/unites.jsonl, écrit par ia/valeurs.py), en points (10 = un bastion) */
+export interface ValeurUnite {
+  points: number;
+  ic95: number;
+  premier_choix: number; // fréquence de premier choix optimal quand la carte est tirée
+  regret_premier: number; // points perdus si A ne la prend pas en premier
+  choix_autojeu?: number; // préférence de l'auto-jeu (1 = neutre)
+  premier_autojeu?: number;
+}
+
+export interface MesureUnites {
+  iteration: number;
+  K: number;
+  unites: Record<string, ValeurUnite>;
+  synergies: Record<string, number>; // « AB » : A et B alliés
+  contres: Record<string, number>; // « AB » > 0 : A l'emporte sur B
+  commencer: number;
+  avantage_premier_choix: number;
+  r2: number;
+  r2_effets_propres: number;
+  sondes: number;
+  decisions_draft: number;
+}
+
+export interface Unites {
+  historique: MesureUnites[];
+  draft: { iteration: number; parties_draft: number; victoires_choisit: number }[];
+}

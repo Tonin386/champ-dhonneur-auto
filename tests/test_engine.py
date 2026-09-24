@@ -86,6 +86,23 @@ def test_knight_needs_bolstered_attacker():
     assert "Sd3xd4" in names(g, g.legal_actions())
 
 
+@pytest.mark.parametrize("coins,allowed", [(2, False), (3, True)])
+def test_berserk_extra_maneuver_knight_after_payment(coins, allowed):
+    # la pièce du Berserk est défaussée avant sa manœuvre supplémentaire : il doit rester renforcé
+    g = empty_game([["B", "P", "X", "H"], ["N", "C", "L", "E"]])
+    put(g, "d2", 0, "B", coins)
+    put(g, "d4", 1, "N")
+    with_hand(g, 0, ["B"])
+    d2, d3, d4 = (g.spec.index[c] for c in ("d2", "d3", "d4"))
+    g.apply(next(a for a in g.legal_actions() if a.kind == "move" and a.cells == (d2, d3)))
+    assert g.pending and g.pending[-1].kind == "berserk"
+    attaque = [a for a in g.legal_actions() if a.kind == ATTACK and a.cells == (d3, d4)]
+    assert bool(attaque) == allowed
+    if allowed:
+        g.apply(attaque[0])
+        assert g.board[d3].coins == coins - 1 and d4 not in g.board
+
+
 def test_archer_only_tactic_and_range():
     g = empty_game([["A", "P", "X", "H"], ["S", "C", "L", "E"]])
     put(g, "d3", 0, "A")

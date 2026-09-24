@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { Film, Run, Tableau, TableDirect } from "./types";
 
 export type Source = { type: "direct"; table: string } | { type: "partie"; fichier: string };
-export type Vue = "plateau" | "mosaique";
+export type Vue = "plateau" | "mosaique" | "unites";
 
 /** Une table est « active » si sa partie avance encore (sinon : fin d'auto-jeu, entraînement arrêté). */
 export const ACTIVITE_S = 45;
@@ -97,7 +97,7 @@ export const useStore = create<Etat>()((set, get) => ({
   pos: 0,
   lecture: true,
   vitesse: lireVitesse(),
-  vue: "plateau",
+  vue: (["plateau", "mosaique", "unites"] as const).find(v => new URLSearchParams(window.location.search).get("vue") === v) ?? "plateau",
   regie: true,
   vues: new Set(),
   erreur: null,

@@ -26,8 +26,8 @@ UNITS: dict[str, UnitDef] = {u.letter: u for u in [
             "Attaque une unité à 2 cases, non adjacente (la case intermédiaire peut être occupée).",
             "(x) N'attaque qu'avec sa tactique.", normal_attack=False),
     UnitDef("B", "Berserk", 5, "",
-            "(!) Après une manœuvre, peut défausser une pièce de sa pile pour manœuvrer à nouveau "
-            "(tant qu'il reste au moins 2 pièces)."),
+            "(!) Après chaque manœuvre, peut défausser une pièce de sa pile pour manœuvrer à nouveau, "
+            "autant de fois que voulu, sans retirer sa dernière pièce."),
     UnitDef("C", "Cavalerie", 4, "Se déplace puis attaque."),
     UnitDef("D", "Porte étendard", 5,
             "Déplace d'une case une unité alliée à 2 cases ou moins ; elle doit finir à 2 cases ou moins du Porte étendard."),
@@ -46,7 +46,7 @@ UNITS: dict[str, UnitDef] = {u.letter: u for u in [
             "Se déplace de 1 ou 2 cases en ligne droite puis attaque dans la même direction.",
             "(x) N'attaque qu'avec sa tactique.", normal_attack=False),
     UnitDef("M", "Mercenaire", 5, "",
-            "(!) Quand vous recrutez un Mercenaire et qu'il est déployé, il effectue une manœuvre gratuite."),
+            "(!) Quand vous recrutez un Mercenaire alors qu'il est déployé, il peut effectuer une manœuvre gratuite."),
     UnitDef("N", "Chevalier", 4, "",
             "(!) Ne peut être attaqué que par des unités renforcées."),
     UnitDef("P", "Piquier", 4, "",

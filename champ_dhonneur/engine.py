@@ -368,14 +368,16 @@ class Game:
             dests.update(d for d in sp.neighbors[mid] if d != pos and d not in self.board)
         return sorted(d for d in dests if d in self.loc_set and self.control[d] == team)
 
-    def _can_attack(self, attacker: Unit, target: Unit) -> bool:
-        return not (target.utype == "N" and attacker.coins < 2)
+    def _can_attack(self, attacker: Unit, target: Unit, paid: int = 0) -> bool:
+        """Chevalier : attaquant renforcé, après avoir payé `paid` pièces de sa pile (Berserk)."""
+        return not (target.utype == "N" and attacker.coins - paid < 2)
 
     def _enemy_at(self, p: int, cell: int) -> Unit | None:
         t = self.board.get(cell)
         return t if t is not None and self.is_enemy(p, t) else None
 
-    def _maneuvers(self, p: int, pos: int, coin: str | None, moves_only: bool = False) -> list[Action]:
+    def _maneuvers(self, p: int, pos: int, coin: str | None, moves_only: bool = False,
+                   paid: int = 0) -> list[Action]:
         unit = self.board[pos]
         u = unit.utype
         out = [Action(MOVE, coin, u, (pos, nb)) for nb in self.spec.neighbors[pos] if nb not in self.board]
@@ -387,7 +389,7 @@ class Game:
         if UNITS[u].normal_attack:
             for nb in self.spec.neighbors[pos]:
                 t = self._enemy_at(p, nb)
-                if t is not None and self._can_attack(unit, t):
+                if t is not None and self._can_attack(unit, t, paid):
                     out.append(Action(ATTACK, coin, u, (pos, nb)))
         return out
 
@@ -465,7 +467,9 @@ class Game:
         if k == "priest":
             return self._coin_actions(pd.player, pd.coin)
         skip = [Action(SKIP)]
-        if k == "berserk" or k == "merc":
+        if k == "berserk":   # la pièce est défaussée de la pile avant la manœuvre
+            return skip + self._maneuvers(pd.player, pd.pos, None, paid=1)
+        if k == "merc":
             return skip + self._maneuvers(pd.player, pd.pos, None)
         if k == "soldat":
             return skip + self._maneuvers(pd.player, pd.pos, None, moves_only=True)

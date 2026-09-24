@@ -174,10 +174,10 @@ def dossier_run(nom: str) -> Path:
     return d
 
 
-def _journal(d: Path) -> list[dict]:
+def _journal(d: Path, nom: str = "journal.jsonl") -> list[dict]:
     lignes = []
     try:
-        with open(d / "journal.jsonl", encoding="utf-8") as f:
+        with open(d / nom, encoding="utf-8") as f:
             for l in f:
                 try:
                     lignes.append(json.loads(l))
@@ -272,6 +272,18 @@ def tableau(d: Path, parties: int = 150) -> dict:
 def _signature(d: Path) -> tuple:
     return tuple(_mtime(d / f) for f in ("journal.jsonl", "etat.json", "elo.json", "direct/phase.json",
                                          "parties"))
+
+
+def unites(d: Path) -> dict:
+    """Valeur dynamique des unités à chaque itération (unites.jsonl, écrit par ia/valeurs.py) et
+    bilan des drafts de l'auto-jeu (journal.jsonl : victoires du premier à choisir)."""
+    draft = []
+    for l in _journal(d):
+        st = l.get("autojeu", {})
+        if st.get("parties_draft"):
+            draft.append({"iteration": l.get("iteration"), "parties_draft": st["parties_draft"],
+                          "victoires_choisit": st.get("victoires_choisit", 0)})
+    return {"historique": _journal(d, "unites.jsonl"), "draft": draft}
 
 
 # ------------------------------------------------------------------ rediffusions
@@ -387,6 +399,11 @@ def entrainements():
 @router.get("/api/entrainements/{nom}")
 def entrainement(nom: str, parties: int = 150):
     return tableau(dossier_run(nom), parties)
+
+
+@router.get("/api/entrainements/{nom}/unites")
+def valeurs_unites(nom: str):
+    return unites(dossier_run(nom))
 
 
 @router.get("/api/entrainements/{nom}/parties/{fichier}")

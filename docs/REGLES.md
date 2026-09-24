@@ -61,4 +61,10 @@ Total : 74 pièces, conforme au matériel.
     contrôlez » ; le chemin peut bifurquer (interprétation courante) mais la case intermédiaire doit être libre.
 12. **Mise en place avancée** (`Game(units="draft")`) : 8 cartes tirées au hasard, choix un par un
     (A1 B2 A2 B2 A1, manche 0), puis B prend l'Initiative et commence.
-13. Garde-fou de simulation : partie nulle après 150 manches (`Game(max_rounds=…)`).
+13. **Berserk contre Chevalier** : la pièce de la manœuvre supplémentaire est défaussée avant la
+    manœuvre ; le Berserk doit encore être renforcé ensuite pour attaquer un Chevalier.
+    → `engine._pending_actions` (`paid=1`), `moteur.rs actions_attente`
+14. **4 joueurs** : une capacité déclenchée sur l'unité d'un équipier (Berserk, Soldat, Moine soldat,
+    par le Porte étendard ou le Capitaine) est décidée et payée par le propriétaire de l'unité ;
+    l'Éclaireur peut être déployé à côté d'une unité de l'équipier. → `engine._trigger`, `_deploy_cells`
+15. Garde-fou de simulation : partie nulle après 150 manches (`Game(max_rounds=…)`).

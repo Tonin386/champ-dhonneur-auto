@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { EQUIPE, NOMS, imgPiece, nomJoueur } from "../jeu";
+import type { Conseil } from "../jouer/types";
 import type { Decor, Image } from "../types";
+import { points } from "./Unites";
 
 function Piece({ c, equipe, petite, cachee }: { c?: string; equipe: number; petite?: boolean; cachee?: boolean }) {
   return (
@@ -25,9 +28,24 @@ interface Props {
   choisie?: string | null;
   /** pièces en main mises en valeur (ex. pièce piochée par le Moine soldat) */
   attente?: string | null;
+  /** draft : valeur de chaque carte (conseil au joueur humain), masquable */
+  conseil?: Conseil | null;
 }
 
-export function Joueur({ decor, image, joueur, nom, role, onPiece, choisie, attente }: Props) {
+const lireMasque = () => {
+  try {
+    return localStorage.getItem("champ.conseil") === "0";
+  } catch {
+    return false;
+  }
+};
+
+export function Joueur({ decor, image, joueur, nom, role, onPiece, choisie, attente, conseil }: Props) {
+  const [masque, setMasque] = useState(lireMasque);
+  const basculer = () => {
+    setMasque(!masque);
+    try { localStorage.setItem("champ.conseil", masque ? "1" : "0"); } catch { /* stockage indisponible */ }
+  };
   const e = decor.equipes[joueur];
   const p = image.j[joueur];
   const trait = !image.f && image.t === joueur;
@@ -92,15 +110,30 @@ export function Joueur({ decor, image, joueur, nom, role, onPiece, choisie, atte
         <div className="bloc draft" aria-label="Cartes à choisir">
           <div className="etiquette">Mise en place avancée : cartes à choisir</div>
           <div className="cartes">
-            {image.tir.dispo.map(u => (
+            {image.tir.dispo.map(u => {
+              const c = !masque ? conseil?.cartes[u] : undefined;
+              const aide = c ? `
+Valeur du draft si vous la prenez : ${points(c.valeur)} points (choix suivants optimaux)
+`
+                + `Valeur propre ${points(c.propre)} ±${c.ic95.toFixed(1)}, synergies ${points(c.synergie)}, contres ${points(c.contre)}` : "";
+              return (
               <figure key={u} className={`carte${onPiece ? " jouable" : ""}`}
-                title={`${decor.cartes[u]?.nom} — ${decor.cartes[u]?.tactique || decor.cartes[u]?.capacite}`}
+                title={`${decor.cartes[u]?.nom} — ${decor.cartes[u]?.tactique || decor.cartes[u]?.capacite}${aide}`}
                 onClick={onPiece ? () => onPiece(u) : undefined}>
+                {c && <span className={`badge-valeur${conseil!.meilleure === u ? " meilleure" : ""}`}>{points(c.valeur)}</span>}
                 <img src={`/img/cartes/${u}.jpg`} alt="" loading="lazy" />
                 <figcaption><b>{u}</b> {decor.cartes[u]?.nom}</figcaption>
               </figure>
-            ))}
+              );
+            })}
           </div>
+          {conseil && (
+            <div className="conseil-draft">
+              <button type="button" onClick={basculer} aria-pressed={!masque}>{masque ? "Afficher" : "Masquer"} la valeur des cartes</button>
+              {!masque && <span title="Points du scoreur (10 = un Lieu d'avance) : valeur du draft pour vous si vous prenez la carte, d'après la dernière mesure de la valeur des unités">
+                it. {conseil.iteration} · {conseil.source}</span>}
+            </div>
+          )}
         </div>
       )}
       <div className="bloc marqueurs" title="Marqueurs Contrôle restant à poser (0 = victoire)">

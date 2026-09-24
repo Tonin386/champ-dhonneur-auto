@@ -372,6 +372,7 @@ function Scene() {
   const humain = useJeu(s => s.humain);
   const attente = useJeu(s => s.attente);
   const pieceAttente = useJeu(s => s.pieceAttente);
+  const conseil = useJeu(s => s.conseil);
   if (!decor || !img) return <div className="scene"><div className="attente-partie">Préparation de la partie…</div></div>;
   const colonne = (j: number) => {
     const actif = vivant && humain && img.t === j && !attente;
@@ -385,7 +386,8 @@ function Scene() {
             if (carte) st.jouer(carte.i);
             else st.choisirPiece(c);
           } : undefined} choisie={actif ? piece : null}
-          attente={vivant && img.t === j && pieceAttente ? pieceAttente : null} />
+          attente={vivant && img.t === j && pieceAttente ? pieceAttente : null}
+          conseil={vivant && img.tir && conseil?.joueur === j ? conseil : null} />
       </div>
     );
   };

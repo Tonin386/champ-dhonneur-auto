@@ -674,7 +674,7 @@ impl Partie {
         }
         for &ps in &pos[..n] {
             out.push(Action::avec(BOLSTER, piece, u, &[ps], 0));
-            self.manoeuvres(p, ps, piece, false, out);
+            self.manoeuvres(p, ps, piece, false, 0, out);
             self.tactiques(p, ps, piece, out);
         }
         if u == U_F && n == 2 {
@@ -707,8 +707,9 @@ impl Partie {
     }
 
     #[inline]
-    fn peut_attaquer(attaquant: &Case, cible: &Case) -> bool {
-        !(cible.genre == U_N && attaquant.pieces < 2)
+    fn peut_attaquer(attaquant: &Case, cible: &Case, paye: u8) -> bool {
+        // Chevalier : attaquant renforcé, après avoir payé `paye` pièces de sa pile (Berserk)
+        !(cible.genre == U_N && attaquant.pieces < 2 + paye)
     }
 
     #[inline]
@@ -721,7 +722,7 @@ impl Partie {
         }
     }
 
-    fn manoeuvres(&self, p: u8, pos: u8, piece: u8, deplacements_seuls: bool, out: &mut Vec<Action>) {
+    fn manoeuvres(&self, p: u8, pos: u8, piece: u8, deplacements_seuls: bool, paye: u8, out: &mut Vec<Action>) {
         let pl = plateau();
         let unite = self.e.cases[pos as usize];
         let u = unite.genre;
@@ -740,7 +741,7 @@ impl Partie {
         if attaque_normale(u) {
             for &nb in &pl.voisins[pos as usize] {
                 if let Some(c) = self.ennemi(p, nb) {
-                    if Self::peut_attaquer(&unite, &c) {
+                    if Self::peut_attaquer(&unite, &c, paye) {
                         out.push(Action::avec(ATTACK, piece, u, &[pos, nb], 0));
                     }
                 }
@@ -761,7 +762,7 @@ impl Partie {
                     }
                     for &tgt in &pl.voisins[mid as usize] {
                         if let Some(c) = self.ennemi(p, tgt) {
-                            if Self::peut_attaquer(&unite, &c) {
+                            if Self::peut_attaquer(&unite, &c, 0) {
                                 out.push(Action::avec(TACTIC, piece, u, &[pos, mid, tgt], 0));
                             }
                         }
@@ -789,7 +790,7 @@ impl Partie {
             U_A => {
                 for &tgt in &pl.anneau2[ps] {
                     if let Some(c) = self.ennemi(p, tgt) {
-                        if Self::peut_attaquer(&unite, &c) {
+                        if Self::peut_attaquer(&unite, &c, 0) {
                             out.push(Action::avec(TACTIC, piece, u, &[pos, tgt], 0));
                         }
                     }
@@ -801,7 +802,7 @@ impl Partie {
                         continue;
                     }
                     if let Some(c) = self.ennemi(p, tgt) {
-                        if Self::peut_attaquer(&unite, &c) {
+                        if Self::peut_attaquer(&unite, &c, 0) {
                             out.push(Action::avec(TACTIC, piece, u, &[pos, tgt], 0));
                         }
                     }
@@ -820,7 +821,7 @@ impl Partie {
                             break;
                         }
                         if let Some(c) = self.ennemi(p, ray[dist]) {
-                            if Self::peut_attaquer(&unite, &c) {
+                            if Self::peut_attaquer(&unite, &c, 0) {
                                 out.push(Action::avec(TACTIC, piece, u, &[pos, ray[dist - 1], ray[dist]], 0));
                             }
                         }
@@ -836,7 +837,7 @@ impl Partie {
                     }
                     for &tgt in &pl.voisins[ap as usize] {
                         if let Some(c) = self.ennemi(p, tgt) {
-                            if Self::peut_attaquer(&allie, &c) {
+                            if Self::peut_attaquer(&allie, &c, 0) {
                                 out.push(Action::avec(TACTIC, piece, u, &[pos, ap, tgt], allie.genre));
                             }
                         }
@@ -870,16 +871,18 @@ impl Partie {
             ATT_PRIEST => self.actions_piece(pd.joueur, pd.piece, out),
             ATT_BERSERK | ATT_MERC => {
                 out.push(Action::simple(SKIP, 0));
-                self.manoeuvres(pd.joueur, pd.pos as u8, 0, false, out);
+                // Berserk : la pièce est défaussée de la pile avant la manœuvre
+                let paye = if pd.genre == ATT_BERSERK { 1 } else { 0 };
+                self.manoeuvres(pd.joueur, pd.pos as u8, 0, false, paye, out);
             }
             ATT_SOLDAT => {
                 out.push(Action::simple(SKIP, 0));
-                self.manoeuvres(pd.joueur, pd.pos as u8, 0, true, out);
+                self.manoeuvres(pd.joueur, pd.pos as u8, 0, true, 0, out);
             }
             ATT_FOOTMAN => {
                 out.push(Action::simple(SKIP, 0));
                 for &pos in pd.positions() {
-                    self.manoeuvres(pd.joueur, pos, 0, false, out);
+                    self.manoeuvres(pd.joueur, pos, 0, false, 0, out);
                 }
             }
             g => panic!("décision en attente inconnue {g}"),
