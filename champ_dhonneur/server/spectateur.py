@@ -45,13 +45,23 @@ class Film:
 
     def __init__(self, mode: str, unites: list[list[str]], graine: int, initiative: int,
                  max_manches: int, entetes: dict | None = None):
-        self.game = Game(mode, unites, seed=graine, first=initiative, max_rounds=max_manches)
+        self._demarrer(Game(mode, unites, seed=graine, first=initiative, max_rounds=max_manches), entetes)
+
+    def _demarrer(self, game: Game, entetes: dict | None) -> None:
+        self.game = game
         self.entetes = entetes or {}
         self._ids: dict[int, int] = {}      # case -> identifiant de l'unité qui l'occupe
         self._cle: dict[int, tuple[int, str]] = {}   # identifiant -> (joueur, type)
         self._suivant = 0
         self._suivre(None)
         self.images = [self._image(None)]
+
+    @classmethod
+    def depuis_partie(cls, game: Game, entetes: dict | None = None) -> "Film":
+        """Film qui part d'une position quelconque (copiée), par exemple issue de l'éditeur."""
+        f = cls.__new__(cls)
+        f._demarrer(game.copy(), entetes)
+        return f
 
     @classmethod
     def depuis_releve(cls, texte: str) -> "Film":

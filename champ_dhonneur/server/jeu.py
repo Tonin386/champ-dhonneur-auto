@@ -1,0 +1,444 @@
+"""Page « Jouer » : parties Humain / IA entraînée, analyse de position et éditeur.
+
+Une partie est un `Film` (le même format d'images que le spectateur) prolongé coup par coup ;
+le navigateur ne reçoit que les images qui lui manquent. Revenir en arrière rejoue la partie
+depuis sa position de départ (position initiale ou position de l'éditeur).
+
+Information cachée : face à une IA, la main de l'IA et ses pièces jouées face cachée sont
+masquées (sauf « mains visibles » ou partie terminée) ; l'analyse n'utilise alors que
+l'information du joueur humain.
+"""
+from __future__ import annotations
+
+import importlib.util
+import os
+import re
+import threading
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
+
+from ..engine import FACE_DOWN, Action, Game
+from ..notation import action_str, describe, export_record
+from ..position import depuis_position, position
+from ..units import FIRST_GAME, UNITS
+from .spectateur import RUNS, Film
+
+router = APIRouter(prefix="/api/jeu")
+
+SCENARIOS = {"premiere": "Première partie", "aleatoire": "Au hasard", "NHPK/CFMG": "Gaugamèles",
+             "ACLF/HPRS": "Bannockburn", "ADNG/CXLE": "Crécy"}
+NIVEAUX = {64: "Rapide", 200: "Normal", 800: "Fort"}
+
+
+# ------------------------------------------------------------------ modèles
+def torch_present() -> bool:
+    return importlib.util.find_spec("torch") is not None
+
+
+def modeles() -> list[dict]:
+    """Modèles entraînés disponibles : meilleur modèle de chaque entraînement, puis itérations."""
+    out: list[dict] = []
+    vus: set[str] = set()
+
+    def ajouter(chemin: Path, nom: str) -> None:
+        reel = str(chemin.resolve())
+        if chemin.exists() and reel not in vus:
+            vus.add(reel)
+            out.append({"chemin": str(chemin), "nom": nom})
+
+    env = os.environ.get("CHAMP_MODELE")
+    if env:
+        ajouter(Path(env), "Meilleur modèle")
+    ajouter(Path("modeles/meilleur.pt"), "Meilleur modèle (modeles/)")
+    runs = sorted((d for d in RUNS.iterdir() if (d / "modeles").is_dir()), key=lambda d: -d.stat().st_mtime) \
+        if RUNS.is_dir() else []
+    for d in runs:
+        ajouter(d / "modeles" / "meilleur.pt", f"Meilleur modèle ({d.name})")
+    for d in runs:
+        for f in sorted((d / "modeles").glob("iter_*.pt"), reverse=True):
+            it = int(re.sub(r"\D", "", f.stem) or 0)
+            ajouter(f, f"{d.name} · itération {it}")
+    return out
+
+
+def _modele_valide(chemin: str | None) -> str | None:
+    if chemin is None:
+        return None
+    if chemin not in {m["chemin"] for m in modeles()}:
+        raise HTTPException(400, "Modèle inconnu")
+    return chemin
+
+
+# ------------------------------------------------------------------ sessions
+class Joueur(BaseModel):
+    type: str = "humain"            # humain | ia
+    niveau: int = 200               # simulations par décision
+    modele: str | None = None
+
+
+class Nouvelle(BaseModel):
+    unites: str = "premiere"
+    graine: int | None = None
+    joueurs: list[Joueur] = [Joueur(), Joueur(type="ia")]
+    position: dict | None = None    # position de l'éditeur
+    mains_visibles: bool = False
+
+
+class Jouer(BaseModel):
+    index: int
+
+
+class Revenir(BaseModel):
+    pos: int
+
+
+class Reglages(BaseModel):
+    joueurs: list[Joueur] | None = None
+    mains_visibles: bool | None = None
+
+
+class Session:
+    def __init__(self, depart: Game, joueurs: list[Joueur], edite: bool, mains_visibles: bool):
+        self.depart = depart.copy()
+        self.edite = edite
+        self.mains_visibles = mains_visibles
+        self.actions: list[Action] = []
+        self.version = 0
+        self.lock = threading.Lock()
+        self.bots: dict[int, object] = {}
+        self.regler(joueurs)
+        self.film = Film.depuis_partie(self.depart, self._entetes())
+
+    @property
+    def game(self) -> Game:
+        return self.film.game
+
+    def regler(self, joueurs: list[Joueur]) -> None:
+        if len(joueurs) != 2 or any(j.type not in ("humain", "ia") for j in joueurs):
+            raise HTTPException(400, "Deux joueurs attendus, humains ou IA")
+        ia = [j for j in joueurs if j.type == "ia"]
+        if ia and not torch_present():
+            raise HTTPException(400, "IA indisponible : PyTorch n'est pas installé (image Docker « ia »)")
+        bots = {}
+        for i, j in enumerate(joueurs):
+            if j.type != "ia":
+                continue
+            j.modele = _modele_valide(j.modele)
+            j.niveau = max(16, min(3200, j.niveau))
+            ancien = self.bots.get(i)
+            if ancien is not None and getattr(ancien, "_spec", None) == (j.niveau, j.modele):
+                bots[i] = ancien
+                continue
+            from ..bots.neural import NeuralBot
+            try:
+                b = NeuralBot(modele=j.modele, simulations=j.niveau, seed=i)
+            except (FileNotFoundError, ValueError) as e:
+                raise HTTPException(400, f"IA indisponible : {e}")
+            b._spec = (j.niveau, j.modele)
+            bots[i] = b
+        self.joueurs = joueurs
+        self.bots = bots
+
+    def _entetes(self) -> dict:
+        noms = [nom_joueur(j) for j in self.joueurs]
+        return {"Type": "partie", "Blanc": noms[0], "Noir": noms[1]}
+
+    def masques(self) -> set[int]:
+        """Joueurs dont la main est cachée à l'écran."""
+        humains = [i for i, j in enumerate(self.joueurs) if j.type == "humain"]
+        if self.mains_visibles or len(humains) != 1:
+            return set()
+        return {i for i in range(2) if i not in humains}
+
+    def revenir(self, n: int) -> None:
+        """Garde les n premières décisions."""
+        n = max(0, min(n, len(self.actions)))
+        film = Film.depuis_partie(self.depart, self._entetes())
+        for a in self.actions[:n]:
+            film.ajouter(a)
+        self.actions = self.actions[:n]
+        self.film = film
+        self.version += 1
+
+    def jeu_a(self, pos: int) -> Game:
+        """Copie de la partie après `pos` décisions."""
+        if pos >= len(self.actions):
+            return self.game.copy()
+        g = self.depart.copy()
+        for a in self.actions[:pos]:
+            g.apply(a)
+        return g
+
+
+SESSIONS: dict[str, Session] = {}
+
+
+def nom_joueur(j: Joueur) -> str:
+    if j.type == "humain":
+        return "Humain"
+    niveau = NIVEAUX.get(j.niveau, f"{j.niveau} simulations")
+    m = next((x["nom"] for x in modeles() if x["chemin"] == j.modele), None) if j.modele else None
+    return f"IA {niveau.lower()}" + (f" — {m}" if m else "")
+
+
+def session(gid: str) -> Session:
+    s = SESSIONS.get(gid)
+    if s is None:
+        raise HTTPException(404, "Partie introuvable (le serveur a peut-être redémarré)")
+    return s
+
+
+# ------------------------------------------------------------------ état envoyé au navigateur
+_PIECE = re.compile(r" \(pièce [^)]*\)$")
+
+
+def _masquer(img: dict, masques: set[int]) -> dict:
+    if not masques:
+        return img
+    img = dict(img)
+    img["j"] = [dict(p, h=["?"] * len(p["h"])) if i in masques else p for i, p in enumerate(img["j"])]
+    a = img.get("a")
+    if a and a["j"] in masques and a["k"] in FACE_DOWN:
+        img["a"] = dict(a, d=_PIECE.sub("", a["d"]), pc=None)
+    return img
+
+
+def etat(s: Session, depuis: int = 0, version: int = -1) -> dict:
+    g = s.game
+    imgs = s.film.images
+    masques = set() if g.done else s.masques()
+    debut = min(depuis, len(imgs)) if version == s.version else 0
+    tm = g.to_move
+    humain = not g.done and s.joueurs[tm].type == "humain"
+    legal = []
+    if humain:
+        for k, a in enumerate(g.legal_actions()):
+            legal.append({"i": k, "n": action_str(g, a, hidden=False), "d": describe(g, a),
+                          "coin": a.coin, "kind": a.kind, "cells": list(a.cells)})
+    out = {
+        "id": s.id, "version": s.version, "debut": debut, "n": len(imgs),
+        "images": [_masquer(i, masques) for i in imgs[debut:]],
+        "joueurs": [dict(j.model_dump(), nom=nom_joueur(j)) for j in s.joueurs],
+        "trait": tm, "humain": humain, "ia": not g.done and not humain,
+        "legal": legal, "attente": g.pending_label() if g.pending and not g.done else "",
+        "piece_attente": g.pending[-1].coin if humain and g.pending and g.pending[-1].kind == "priest" else None,
+        "fini": g.done, "resultat": g.result_label(), "edite": s.edite,
+        "mains_visibles": s.mains_visibles, "masques": sorted(masques),
+    }
+    if debut == 0:
+        out["decor"] = s.film.decor()
+    return out
+
+
+# ------------------------------------------------------------------ routes
+@router.get("/regles")
+def regles():
+    """Ce que l'éditeur et l'écran de mise en place doivent connaître."""
+    g = Game("2J", "premiere", seed=0)
+    decor = Film.depuis_partie(g).decor()
+    return {
+        "cases": decor["cases"], "cols": decor["cols"], "max_y2": decor["max_y2"],
+        "departs": [[g.spec.names[g.spec.index[n]] for n in l] for l in g.spec.starts],
+        "unites": {u: {"nom": d.name, "pieces": d.count, "max": d.max_units, "tactique": d.tactic,
+                       "capacite": d.ability} for u, d in sorted(UNITS.items())},
+        "premiere": FIRST_GAME, "scenarios": SCENARIOS, "niveaux": NIVEAUX,
+    }
+
+
+@router.get("/ia")
+def ia():
+    if not torch_present():
+        return {"disponible": False, "raison": "PyTorch n'est pas installé sur ce serveur (image Docker « ia »)",
+                "modeles": []}
+    m = modeles()
+    if not m:
+        return {"disponible": False, "raison": "Aucun modèle entraîné trouvé (runs/*/modeles, modeles/)",
+                "modeles": []}
+    return {"disponible": True, "modeles": m}
+
+
+def _unites(s: str):
+    if s in ("aleatoire", "premiere"):
+        return s
+    groupes = [list(x) for x in s.upper().split("/")]
+    if len(groupes) != 2:
+        raise HTTPException(400, "Unités : « SPXH/ACLE » attendu")
+    return groupes
+
+
+@router.post("")
+def nouvelle(req: Nouvelle):
+    if req.position is not None:
+        try:
+            g = depuis_position(req.position, req.graine)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    else:
+        try:
+            g = Game("2J", _unites(req.unites), seed=req.graine)
+        except (AssertionError, KeyError, ValueError) as e:
+            raise HTTPException(400, f"Mise en place invalide : {e}")
+    s = Session(g, req.joueurs, req.position is not None, req.mains_visibles)
+    s.id = uuid.uuid4().hex[:10]
+    SESSIONS[s.id] = s
+    while len(SESSIONS) > 200:
+        SESSIONS.pop(next(iter(SESSIONS)))
+    return etat(s)
+
+
+@router.get("/{gid}")
+def lire(gid: str, depuis: int = 0, version: int = -1):
+    return etat(session(gid), depuis, version)
+
+
+@router.post("/{gid}/jouer")
+def jouer(gid: str, req: Jouer, depuis: int = 0, version: int = -1):
+    s = session(gid)
+    with s.lock:
+        g = s.game
+        if g.done:
+            raise HTTPException(400, "La partie est terminée")
+        if s.joueurs[g.to_move].type != "humain":
+            raise HTTPException(400, "C'est au tour de l'IA")
+        legal = g.legal_actions()
+        if not 0 <= req.index < len(legal):
+            raise HTTPException(400, "Coup inconnu (la position a changé ?)")
+        a = legal[req.index]
+        s.film.ajouter(a)
+        s.actions.append(a)
+        return etat(s, depuis, version)
+
+
+@router.post("/{gid}/ia")
+def coup_ia(gid: str, depuis: int = 0, version: int = -1):
+    """L'IA au trait joue une décision (le navigateur rappelle tant que l'IA a le trait)."""
+    s = session(gid)
+    with s.lock:
+        g = s.game
+        if not g.done and s.joueurs[g.to_move].type == "ia":
+            a = s.bots[g.to_move].choose(g)
+            s.film.ajouter(a)
+            s.actions.append(a)
+        return etat(s, depuis, version)
+
+
+@router.post("/{gid}/revenir")
+def revenir(gid: str, req: Revenir):
+    """Reprend la partie après `pos` décisions (les suivantes sont effacées)."""
+    s = session(gid)
+    with s.lock:
+        s.revenir(req.pos)
+        return etat(s)
+
+
+@router.post("/{gid}/annuler")
+def annuler(gid: str):
+    """Annule le dernier coup humain (et les réponses de l'IA qui ont suivi)."""
+    s = session(gid)
+    with s.lock:
+        g = s.depart.copy()
+        dernier = None
+        for k, a in enumerate(s.actions):
+            if s.joueurs[g.to_move].type == "humain" and not g.pending:
+                dernier = k
+            g.apply(a)
+        if dernier is None:
+            dernier = max(0, len(s.actions) - 1)
+        s.revenir(dernier)
+        return etat(s)
+
+
+@router.post("/{gid}/reglages")
+def reglages(gid: str, req: Reglages):
+    s = session(gid)
+    with s.lock:
+        if req.joueurs is not None:
+            s.regler(req.joueurs)
+            s.film.entetes = s._entetes()
+        if req.mains_visibles is not None:
+            s.mains_visibles = req.mains_visibles
+        s.version += 1
+        return etat(s)
+
+
+@router.get("/{gid}/position")
+def lire_position(gid: str, pos: int | None = None):
+    s = session(gid)
+    with s.lock:
+        g = s.jeu_a(len(s.actions) if pos is None else pos)
+    if s.masques() and not g.done:
+        raise HTTPException(400, "Position indisponible : la main de l'IA est cachée (affichez les mains)")
+    return position(g)
+
+
+@router.get("/{gid}/releve", response_class=PlainTextResponse)
+def releve(gid: str):
+    s = session(gid)
+    if s.edite:
+        raise HTTPException(400, "Partie issue de l'éditeur : pas de relevé rejouable depuis la mise en place")
+    noms = [nom_joueur(j) for j in s.joueurs]
+    return export_record(s.game, hidden=True, headers={"Blanc": noms[0], "Noir": noms[1]})
+
+
+# ------------------------------------------------------------------ analyse
+_ANALYSTE: dict = {}
+_ANALYSTE_VERROU = threading.Lock()
+
+
+def _analyste(simulations: int, modele: str | None):
+    from ..bots.neural import modele_par_defaut
+    from ..ia.analyse import bot_analyse
+    chemin = modele or modele_par_defaut()
+    cle = (simulations, chemin, chemin and os.path.getmtime(chemin))
+    if cle not in _ANALYSTE:
+        _ANALYSTE.clear()
+        _ANALYSTE[cle] = bot_analyse(simulations, chemin)
+    return _ANALYSTE[cle]
+
+
+@router.post("/{gid}/analyse")
+def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: str | None = None):
+    """Évaluation (10 = un bastion d'avance, + pour Or), victoire forcée et meilleurs coups."""
+    from ..score import Solveur, appreciation, bastions, texte_mat, texte_score
+    s = session(gid)
+    with s.lock:
+        n = len(s.actions) if pos is None else max(0, min(pos, len(s.actions)))
+        g = s.jeu_a(n)
+        masques = set() if g.done else s.masques()
+    base = {"pos": n, "trait": g.to_move, "bastions": bastions(g)}
+    if g.done:
+        return dict(base, fini=g.result_label(), texte=g.result_label().replace("1/2-1/2", "½-½"),
+                    score=0.0 if g.winner is None else (99.9 if g.winner == 0 else -99.9), coups=[])
+    if g.to_move in masques:
+        return dict(base, indisponible="L'IA réfléchit : l'analyse reprend à votre tour "
+                                       "(elle n'utilise que ce que vous savez).")
+    observateur = g.to_move if masques else None
+    modele = _modele_valide(modele)
+    ia_ok = torch_present() and (modele or modeles())
+    if not ia_ok:
+        mat = Solveur(observateur).chercher(g)
+        b = bastions(g)
+        score = 10.0 * (b[0] - b[1])
+        out = dict(base, source="materiel", score=score, texte=texte_score(score),
+                   appreciation=appreciation(score), coups=[], mat=None,
+                   indisponible="Réseau indisponible : score au seul décompte des bastions")
+        if mat:
+            out.update(texte=texte_mat(mat["equipe"], mat["coups"]),
+                       mat={"equipe": mat["equipe"], "coups": mat["coups"],
+                            "coup": mat["action"] and action_str(g, mat["action"], hidden=False)})
+        return out
+    from ..ia.analyse import analyser
+    simulations = max(32, min(3200, simulations))
+    with _ANALYSTE_VERROU:
+        try:
+            bot = _analyste(simulations, modele)
+        except (FileNotFoundError, ImportError) as e:
+            raise HTTPException(400, f"IA indisponible : {e}")
+        r = analyser(g, bot, top=6, observateur=observateur)
+    for c in r["coups"]:
+        c.pop("action", None)
+    return dict(base, source="reseau", **{k: v for k, v in r.items() if k != "bastions"})

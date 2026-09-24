@@ -221,19 +221,25 @@ def cmd_evaluate(args) -> None:
 
 
 def cmd_analyse(args) -> None:
-    from .ia.analyse import analyser, texte
+    from .ia.analyse import analyser, bot_analyse, texte
     g = import_record(Path(args.fichier).read_text(encoding="utf-8"))
     n = len(g.log) if args.coup is None else args.coup
     g = rebuild(g, n)
-    spec = f"ia:sims={args.simulations},dispositif={args.dispositif}"
-    if args.modele:
-        spec += f",modele={args.modele}"
-    bot = make_bot(spec, seed=0)
+    bot = bot_analyse(args.simulations, args.modele, args.dispositif)
     print(board_text(g))
     print(f"\nAprès {n} décisions — au trait : {side_label(g, g.to_move)}")
     if g.pending_label():
         print(f"» {g.pending_label()}")
     print(texte(analyser(g, bot, args.top)))
+
+
+def cmd_calibrer(args) -> None:
+    from .score import K, calibrer
+    fichiers = [f for d in args.dossiers for f in (sorted(Path(d).glob("*.nch")) if Path(d).is_dir() else [Path(d)])]
+    r = calibrer(fichiers)
+    print(f"{len(fichiers)} parties, {r['positions']} positions : K = {r['K']:.2f} "
+          f"(actuel {K:.2f}) — un bastion d'avance ≈ {100 * r['gain_1_bastion']:.0f} % de victoires")
+    print("Pour l'adopter : champ_dhonneur/score.py, constante K.")
 
 
 def cmd_bench(args) -> None:
@@ -309,6 +315,10 @@ def main(argv=None) -> None:
     an.add_argument("--dispositif", default="cpu")
     an.add_argument("--top", type=int, default=5)
     an.set_defaults(fn=cmd_analyse)
+    ca = sub.add_parser("calibrer", help="recalculer l'échelle du score (10 = un bastion d'avance)")
+    ca.add_argument("dossiers", nargs="*", default=["runs/continu/parties"],
+                    help="relevés .nch ou dossiers qui en contiennent")
+    ca.set_defaults(fn=cmd_calibrer)
     bc = sub.add_parser("banc", help="mesurer le matériel et recommander les réglages d'auto-jeu")
     bc.add_argument("--config", help="configuration d'entraînement à tester")
     bc.add_argument("--travailleurs", help="liste de nombres de processus à essayer, ex. 4,6,7,8")
