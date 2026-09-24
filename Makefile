@@ -1,5 +1,5 @@
 .PHONY: install install-ia test web console arene docker entrainer test-ia suivi banc \
-        wheels debs verrou images continu continu-arret continu-journal suivi-continu front front-dev
+        wheels debs vendor verrou images continu continu-arret continu-journal suivi-continu front front-dev
 
 # ---- dépendances Docker en cache local (./wheels) ------------------------------------------
 # « make wheels » télécharge une fois pour toutes les versions figées de requirements-docker.txt ;
@@ -27,7 +27,16 @@ verrou:
 	  | sed '1i # Versions figées des dépendances des images Docker (Python 3.12).\n# Les wheels correspondantes sont mises en cache dans ./wheels par « make wheels ».' \
 	  > requirements-docker.txt
 	$(MAKE) wheels
-images: wheels debs front
+# Cache Rust absent d'un clone Git : vérifier les versions figées avant de le remplir.
+RUST_IMAGE = rust:1-slim-trixie
+vendor:
+	docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -e CARGO_HOME=/tmp/cargo \
+	  -v "$(CURDIR)/rust:/rs" -w /rs $(RUST_IMAGE) sh -c '\
+	  cargo metadata --locked --offline --format-version 1 >/dev/null 2>&1 \
+	    && echo "vendor : cache complet, rien à télécharger" \
+	    || cargo vendor --locked vendor'
+
+images: wheels debs vendor front
 	docker compose build web
 	docker compose --profile ia build web-ia
 
@@ -45,7 +54,7 @@ front: champ_dhonneur/server/web/index.html
 front-dev: ; cd web && npm run dev
 
 # ---- entraînement continu en arrière-plan + interface web (spectateur) -----------------------
-continu: wheels debs front
+continu: wheels debs vendor front
 	mkdir -p runs
 	docker compose --profile continu up -d --build
 continu-arret:

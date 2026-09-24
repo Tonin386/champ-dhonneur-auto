@@ -32,11 +32,13 @@ fois (les cibles `make` ne retéléchargent rien quand le cache est complet) :
 |---|---|---|
 | `wheels/` (2,9 Go) | wheels Python figées dans `requirements-docker.txt` (PyTorch CUDA compris) | `make wheels` (`make verrou` pour recalculer les versions) |
 | `debs/` (60 Mo) | paquets Debian de gcc (requis par `torch.compile`) | `make debs` |
-| `rust/vendor/` | crates Rust du moteur `champ_rs` | `cargo vendor` (déjà fait) |
+| `rust/vendor/` | crates Rust du moteur `champ_rs`, figées dans `rust/Cargo.lock` | `make vendor` |
 | `web/node_modules/` | dépendances du spectateur | premier `make front` |
 
 `make continu` et `make images` appellent ces cibles puis construisent les images. Avec
 `docker build` directement : `--build-context wheels=./wheels --build-context debs=./debs`.
+Le cache Rust est exclu de Git : `make vendor` le prépare après un nouveau clone et le
+complète si les dépendances changent. Cette étape utilise Docker, sans installation locale de Rust.
 
 Sans Docker (Python ≥ 3.11) :
 
