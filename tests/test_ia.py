@@ -209,3 +209,101 @@ def test_determinisation_rapide():
     assert encode_state(d)["cell_i"].tolist() == encode_state(g)["cell_i"].tolist()
     while not d.done and d.round < g.round + 3:
         d.apply(d.legal_actions()[0])
+
+
+# ------------------------------------------------------------ mise en place avancée
+def partie_draft(seed=4, choix=3):
+    g = Game("2J", "draft", seed=seed)
+    rng = random.Random(seed)
+    for _ in range(choix):
+        g.apply(rng.choice(g.legal_actions()))
+    return g
+
+
+def test_encodage_draft():
+    from champ_dhonneur.ia.encodage import GLOB_F, KIND_ID, PENDING_ID
+    g = partie_draft()
+    e = encode_state(g)
+    assert e["unit_i"].shape == (8, 2) and e["glob_f"].shape == (GLOB_F,)
+    camps = sorted(e["unit_i"][:, 1].tolist())
+    assert camps.count(2) == 5 and camps.count(0) + camps.count(1) == 3
+    assert e["glob_i"][0] == PENDING_ID["draft"] and e["glob_f"][22] == 1.0
+    acts = encode_actions(g, g.legal_actions())
+    assert len(acts) == 5 and (acts[:, 0] == KIND_ID["draft"]).all()
+
+
+def test_encodage_apres_draft_identique_aux_armees_imposees():
+    g = Game("2J", "draft", seed=8)
+    rng = random.Random(0)
+    while g.in_draft:
+        g.apply(rng.choice(g.legal_actions()))
+    h = Game("2J", [p.units for p in g.players], seed=8, first=g.first_player)
+    a, b = encode_state(g), encode_state(h)
+    assert all(np.array_equal(a[k], b[k]) for k in a)
+
+
+def test_autojeu_draft_et_cibles_auxiliaires():
+    P = ParamsAutoJeu(parties=3, simultanees=3, simulations=8, simulations_rapides=4, max_manches=15,
+                      p_draft=1.0, simulations_draft=8, releves=2)
+    data, st = jouer_parties(EvaluateurUniforme(), P, seed=5)
+    assert st["parties_draft"] == 3
+    n = len(data["z"])
+    assert data["lieux"].shape == (n, 37) and data["marge"].shape == (n,) and data["main_adv"].shape == (n, 18)
+    assert ((data["glob_i"][:, 0] == 7).sum()) >= 3 * 7   # 7 vrais choix par draft
+    from champ_dhonneur.notation import import_record
+    for t in st["releves"]:
+        assert "[Draft " in t and import_record(t).done
+
+
+def test_reseau_draft_et_tetes_auxiliaires():
+    torch = pytest.importorskip("torch")
+    from champ_dhonneur.ia.encodage import collate
+    from champ_dhonneur.ia.modele import ConfigModele, ReseauChamp
+    g = partie_draft()
+    h = partie_avancee()
+    x, _ = collate([encode_state(g), encode_state(h)], [encode_actions(g, g.legal_actions()),
+                                                        encode_actions(h, h.legal_actions())])
+    m = ReseauChamp(ConfigModele(d=32, couches=1, tetes=2))
+    logits, v, aux = m({k: torch.from_numpy(v) for k, v in x.items()}, aux=True)
+    assert logits.shape[0] == 2 and v.shape == (2, 3)
+    assert aux["lieux"].shape == (2, 37, 3) and aux["marge"].shape == (2, 9) and aux["main"].shape == (2, 18, 4)
+
+
+def test_modele_v1_refuse(tmp_path):
+    torch = pytest.importorskip("torch")
+    from champ_dhonneur.ia.modele import ConfigModele, ModeleIncompatible, ReseauChamp, charger, sauver
+    m = ReseauChamp(ConfigModele(d=32, couches=1, tetes=2))
+    sauver(tmp_path / "v2.pt", m)
+    charger(tmp_path / "v2.pt")
+    ck = torch.load(tmp_path / "v2.pt", weights_only=False)
+    ck["version_encodage"] = 1
+    torch.save(ck, tmp_path / "v1.pt")
+    with pytest.raises(ModeleIncompatible):
+        charger(tmp_path / "v1.pt")
+
+
+def test_valeurs_unites_modele_synthetique():
+    """Le modèle d'armée retrouve des effets propres connus et le minimax suit la force brute."""
+    from itertools import permutations
+
+    from champ_dhonneur.ia import valeurs as V
+    pools = V.tirages(40, graine=3)
+    vrai = np.linspace(-0.4, 0.4, 16)
+    L = np.array([[sum(vrai[V.IDX[p[i]]] for i in s) - sum(vrai[V.IDX[u]] for i, u in enumerate(p) if i not in s)
+                   for s in V.REPARTITIONS] for p in pools])
+    fit = V.ajuster(pools, L, ridge=1.0)   # la pénalité sur s et c lève la confusion avec a
+    assert np.allclose(fit["a"], vrai - vrai.mean(), atol=1e-3) and fit["r2"] > 0.999
+    rng = np.random.default_rng(0)
+    lt = rng.normal(size=70)
+    d, _ = V.minimax_draft(lt)
+    feuille = {sum(1 << i for i in s): lt[r] for r, s in enumerate(V.REPARTITIONS)}
+    ordre = (0, 1, 1, 0, 0, 1, 1, 0)
+
+    def force_brute(ma, mb, e):
+        if e == 8:
+            return feuille[ma]
+        vs = [force_brute(ma | 1 << i, mb, e + 1) if ordre[e] == 0 else force_brute(ma, mb | 1 << i, e + 1)
+              for i in range(8) if not (ma | mb) >> i & 1]
+        return max(vs) if ordre[e] == 0 else min(vs)
+    assert abs(force_brute(0, 0, 0) - d) < 1e-12
+    assert V.calibrer_k([]) is None

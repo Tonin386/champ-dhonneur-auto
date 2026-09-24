@@ -8,9 +8,11 @@ pub const CELL_F: usize = 3;
 pub const UNIT_I: usize = 2;
 pub const UNIT_F: usize = 12;
 pub const GLOB_I: usize = 2;
-pub const GLOB_F: usize = 22;
+pub const GLOB_F: usize = 26;
 pub const ACT_F: usize = 7;
 pub const N_UNITES: usize = 8;
+/// Type d'action « choisir une carte » et type de décision « draft » (glob_i[0]) de l'encodage.
+pub const ATT_DRAFT: i64 = 7;
 
 /// Observation du joueur au trait, en entiers (i64) et flottants (f32), à plat.
 #[derive(Clone)]
@@ -75,9 +77,10 @@ pub fn encoder_etat(g: &Partie) -> Observation {
     let mut k = 0;
     for (cote, j) in [me, opp].into_iter().enumerate() {
         let mut unites = j.unites;
-        unites.sort();
+        let n = j.n_unites as usize;
+        unites[..n].sort();
         let mine = cote == 0;
-        for u in unites {
+        for &u in &unites[..n] {
             o.unit_i[k * UNIT_I] = u as i64;
             o.unit_i[k * UNIT_I + 1] = cote as i64;
             let h = j.main.count(u) as f32;
@@ -100,9 +103,21 @@ pub fn encoder_etat(g: &Partie) -> Observation {
             k += 1;
         }
     }
+    if g.e.en_draft {
+        for u in 1..=16u8 {
+            if g.e.dispo & (1 << (u - 1)) != 0 {
+                o.unit_i[k * UNIT_I] = u as i64;
+                o.unit_i[k * UNIT_I + 1] = 2;
+                o.unit_f[k * UNIT_F + 9] = NOMBRE[u as usize] as f32 / 5.0;
+                k += 1;
+            }
+        }
+    }
     if let Some(pd) = attente {
         o.glob_i[0] = pd.genre as i64;
         o.glob_i[1] = pd.piece as i64;
+    } else if g.e.en_draft {
+        o.glob_i[0] = ATT_DRAFT;
     }
     let gf = &mut o.glob_f;
     let un = |b: bool| if b { 1.0f32 } else { 0.0 };
@@ -128,6 +143,17 @@ pub fn encoder_etat(g: &Partie) -> Observation {
     gf[19] = g.e.manche as f32 / g.e.max_manches as f32;
     gf[20] = un(g.e.courant == p);
     gf[21] = pl.lieux.iter().filter(|&&l| g.e.controle[l as usize] < 0).count() as f32 / 10.0;
+    if g.e.en_draft {
+        let s = g.e.etape_draft as usize;
+        let mut n = 1;
+        while s + n < N_CARTES && ORDRE_DRAFT[s + n] == ORDRE_DRAFT[s] {
+            n += 1;
+        }
+        gf[22] = 1.0;
+        gf[23] = s as f32 / N_CARTES as f32;
+        gf[24] = n as f32 / 2.0;
+    }
+    gf[25] = un(g.e.premier == p);
     o
 }
 

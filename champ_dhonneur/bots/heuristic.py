@@ -65,6 +65,8 @@ class GreedyBot(Bot):
     name = "glouton"
 
     def choose(self, game: Game) -> Action:
+        if game.in_draft:   # l'heuristique ne sait pas évaluer une composition d'armée
+            return self.rng.choice(game.legal_actions())
         me = game.to_move
         team = game.team(me)
         view = game.determinize(me, self.rng)

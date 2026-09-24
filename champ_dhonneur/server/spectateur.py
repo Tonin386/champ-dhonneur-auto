@@ -44,8 +44,10 @@ class Film:
     """
 
     def __init__(self, mode: str, unites: list[list[str]], graine: int, initiative: int,
-                 max_manches: int, entetes: dict | None = None):
-        self._demarrer(Game(mode, unites, seed=graine, first=initiative, max_rounds=max_manches), entetes)
+                 max_manches: int, entetes: dict | None = None, setup: dict | None = None):
+        game = Game(**setup) if setup else Game(mode, unites, seed=graine, first=initiative,
+                                                max_rounds=max_manches)
+        self._demarrer(game, entetes)
 
     def _demarrer(self, game: Game, entetes: dict | None) -> None:
         self.game = game
@@ -66,8 +68,8 @@ class Film:
     @classmethod
     def depuis_releve(cls, texte: str) -> "Film":
         complete = import_record(texte)
-        f = cls(complete.mode, [p.units for p in complete.players], complete.seed,
-                complete.first_player, complete.max_rounds, parse_headers(texte))
+        f = cls.__new__(cls)
+        f._demarrer(complete.neuve(), parse_headers(texte))
         for _, _, a in complete.log:
             f.ajouter(a)
         return f
@@ -122,7 +124,11 @@ class Film:
                    "l": sum(p.lost.values())} for p in g.players],
             "a": info,
         }
-        if g.pending and not g.done:
+        if g.draft is not None:   # mise en place avancée : armées en cours de constitution
+            img["arm"] = [list(p.units) for p in g.players]
+            if g.in_draft:
+                img["tir"] = {"dispo": list(g.draft.available), "etape": g.draft.step}
+        if (g.pending or g.in_draft) and not g.done:
             img["p"] = g.pending_label()
         if g.done:
             img["f"] = {"g": g.winner, "r": g.result_label()}
@@ -132,7 +138,7 @@ class Film:
         """Ce qui ne change pas pendant la partie : plateau, unités, en-têtes."""
         g = self.game
         sp = g.spec
-        lettres = sorted({u for p in g.players for u in p.units})
+        lettres = sorted({u for p in g.players for u in p.units} | set(g.draft.pool if g.draft else ()))
         return {
             "mode": g.mode, "cols": len(sp.col_lengths), "max_y2": max(y for _, y in sp.xy2),
             "cases": [[sp.names[i], x, y2, i in g.loc_set] for i, (x, y2) in enumerate(sp.xy2)],
@@ -142,6 +148,7 @@ class Film:
                            "tactique": UNITS[u].tactic, "capacite": UNITS[u].ability}
                        for u in lettres},
             "graine": g.seed, "entetes": self.entetes,
+            **({"draft": {"cartes": list(g.draft.pool), "premier": g.draft.first}} if g.draft else {}),
         }
 
 
@@ -322,7 +329,8 @@ class Table:
                            "Blanc": data.get("joueur", ph.get("joueur", "?")),
                            "Noir": data.get("joueur", ph.get("joueur", "?"))}
                 self.film = Film(data.get("mode", "2J"), data["unites"], data["graine"],
-                                 data["initiative"], data.get("max_manches", 150), entetes)
+                                 data["initiative"], data.get("max_manches", 150), entetes,
+                                 setup=data.get("setup"))
                 self.id = data["id"]
             for a in actions[len(self.film.images) - 1:]:
                 self.film.ajouter(a)

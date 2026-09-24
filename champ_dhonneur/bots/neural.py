@@ -22,14 +22,33 @@ from .base import Bot
 
 DEFAUTS = ["modeles/meilleur.pt", "runs/continu/modeles/meilleur.pt", "runs/principal/modeles/meilleur.pt"]
 _CACHE: dict[tuple, object] = {}
+_VERSIONS: dict[tuple, bool] = {}
+
+
+def modele_compatible(chemin: str | Path) -> bool:
+    """Le modèle a-t-il été entraîné avec l'encodage actuel ? (mis en cache par date du fichier)"""
+    try:
+        cle = (str(chemin), os.path.getmtime(chemin))
+    except OSError:
+        return False
+    if cle not in _VERSIONS:
+        try:
+            import torch
+
+            from ..ia.encodage import VERSION
+            ck = torch.load(chemin, map_location="cpu", weights_only=False, mmap=True)
+            _VERSIONS[cle] = ck.get("version_encodage", 1) == VERSION
+        except Exception:  # noqa: BLE001 — fichier illisible ou PyTorch absent
+            _VERSIONS[cle] = False
+    return _VERSIONS[cle]
 
 
 def modele_par_defaut() -> str | None:
     env = os.environ.get("CHAMP_MODELE")
-    if env and Path(env).exists():
+    if env and Path(env).exists() and modele_compatible(env):
         return env
     for c in DEFAUTS:
-        if Path(c).exists():
+        if Path(c).exists() and modele_compatible(c):
             return c
     return None
 

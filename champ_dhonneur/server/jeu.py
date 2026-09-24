@@ -29,7 +29,8 @@ from .spectateur import RUNS, Film
 
 router = APIRouter(prefix="/api/jeu")
 
-SCENARIOS = {"premiere": "Première partie", "aleatoire": "Au hasard", "NHPK/CFMG": "Gaugamèles",
+SCENARIOS = {"premiere": "Première partie", "aleatoire": "Au hasard",
+             "draft": "Mise en place avancée (draft)", "NHPK/CFMG": "Gaugamèles",
              "ACLF/HPRS": "Bannockburn", "ADNG/CXLE": "Crécy"}
 NIVEAUX = {64: "Rapide", 200: "Normal", 800: "Fort"}
 
@@ -44,9 +45,11 @@ def modeles() -> list[dict]:
     out: list[dict] = []
     vus: set[str] = set()
 
+    from ..bots.neural import modele_compatible
+
     def ajouter(chemin: Path, nom: str) -> None:
         reel = str(chemin.resolve())
-        if chemin.exists() and reel not in vus:
+        if chemin.exists() and reel not in vus and modele_compatible(chemin):
             vus.add(reel)
             out.append({"chemin": str(chemin), "nom": nom})
 
@@ -262,7 +265,7 @@ def ia():
 
 
 def _unites(s: str):
-    if s in ("aleatoire", "premiere"):
+    if s in ("aleatoire", "premiere", "draft"):
         return s
     groupes = [list(x) for x in s.upper().split("/")]
     if len(groupes) != 2:
@@ -343,7 +346,7 @@ def annuler(gid: str):
         g = s.depart.copy()
         dernier = None
         for k, a in enumerate(s.actions):
-            if s.joueurs[g.to_move].type == "humain" and not g.pending:
+            if s.joueurs[g.to_move].type == "humain" and g.turn_start:
                 dernier = k
             g.apply(a)
         if dernier is None:
@@ -457,5 +460,5 @@ def _gain(out: dict) -> dict:
     if out.get("mat"):
         out["gain_or"] = 1.0 if out["mat"]["equipe"] == 0 else 0.0
     elif out.get("score") is not None:
-        out["gain_or"] = round((1 + vers_valeur(out["score"])) / 2, 4)
+        out["gain_or"] = round((1 + vers_valeur(out["score"], out.get("k"))) / 2, 4)
     return out

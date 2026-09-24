@@ -35,7 +35,7 @@ Notation : voir docs/NOTATION.md — MAJUSCULE = Blanc, minuscule = Noir sur le 
 
 
 def parse_units(s: str | None, mode: str):
-    if s in (None, "aleatoire", "premiere"):
+    if s in (None, "aleatoire", "premiere", "draft"):
         return s
     groups = s.upper().split("/")
     return [list(g) for g in groups]
@@ -47,8 +47,7 @@ def side_label(game: Game, p: int) -> str:
 
 
 def rebuild(game: Game, n: int) -> Game:
-    g = Game(game.mode, [p.units for p in game.players], seed=game.seed,
-             first=game.first_player, max_rounds=game.max_rounds)
+    g = game.neuve()
     for _, _, a in game.log[:n]:
         g.apply(a)
     return g
@@ -204,11 +203,13 @@ def cmd_evaluate(args) -> None:
         with ProcessPoolExecutor(args.travailleurs, mp_context=mp.get_context("spawn"),
                                  initializer=_init_travailleur) as ex:
             r = match_parallele(args.a, args.b, args.paires, args.graine, ex, args.travailleurs,
-                                args.simulations, sims_b, args.dispositif, nom_a=nom_a, nom_b=nom_b)
+                                args.simulations, sims_b, args.dispositif, nom_a=nom_a, nom_b=nom_b,
+                                protocole=args.protocole)
     else:
         a = agent_depuis_spec(args.a, args.simulations, args.dispositif, nom_a)
         b = agent_depuis_spec(args.b, sims_b, args.dispositif, nom_b)
-        r = match(a, b, paires=args.paires, seed=args.graine, simultanees=args.simultanees)
+        r = match(a, b, paires=args.paires, seed=args.graine, simultanees=args.simultanees,
+                  protocole=args.protocole)
     print(f"{nom_a} contre {nom_b} : +{r['victoires']} ={r['nulles']} -{r['defaites']} "
           f"sur {r['parties']} parties appariées — score {r['score']:.3f}, "
           f"écart Elo ≈ {r['elo_diff']:+.0f}, {r['manches'] / max(r['parties'], 1):.1f} manches/partie")
@@ -269,7 +270,8 @@ def main(argv=None) -> None:
     p.add_argument("--blanc", default="humain", help=f"{roles} ou mcts:2000, mcts:t=3")
     p.add_argument("--noir", default="mcts")
     p.add_argument("--joueurs", help="4J : rôles séparés par des virgules (J1..J4)")
-    p.add_argument("--unites", default="aleatoire", help="aleatoire | premiere | SPXH/ACLE")
+    p.add_argument("--unites", default="aleatoire",
+                   help="aleatoire | premiere | draft (mise en place avancée) | SPXH/ACLE")
     p.add_argument("--graine", type=int)
     p.add_argument("--releve", help="fichier .nch où enregistrer la partie")
     p.set_defaults(fn=cmd_play)
@@ -304,6 +306,8 @@ def main(argv=None) -> None:
     e.add_argument("--simultanees", type=int, default=32)
     e.add_argument("--graine", type=int, default=0)
     e.add_argument("--elo", help="fichier JSON de classement à mettre à jour")
+    e.add_argument("--protocole", default="aleatoire", choices=["aleatoire", "draft"],
+                   help="armées tirées au hasard, ou mise en place avancée (draft)")
     e.add_argument("--travailleurs", type=int, default=0,
                    help="répartir les parties sur N processus (0 = un seul processus)")
     e.set_defaults(fn=cmd_evaluate)

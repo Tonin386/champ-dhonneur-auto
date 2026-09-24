@@ -2,8 +2,8 @@
 //! requêtes forment un lot unique que Python fait évaluer par le réseau (GPU).
 
 use crate::encodage::*;
-use crate::moteur::{Action, Partie};
-use crate::plateau::{AUCUNE_CASE, N_CASES};
+use crate::moteur::{Action, Partie, N_TYPES};
+use crate::plateau::{plateau, AUCUNE_CASE, N_CASES};
 use crate::recherche::{ParamsRecherche, Recherche, Requete};
 use crate::rng::Rapide;
 
@@ -22,6 +22,10 @@ pub struct ParamsAutoJeu {
     pub c_visit: f64,
     pub c_scale: f64,
     pub releves: usize,
+    /// part des parties commencées par la mise en place avancée (draft)
+    pub p_draft: f64,
+    /// simulations aux décisions de draft (toujours des recherches complètes)
+    pub simulations_draft: usize,
 }
 
 struct Exemple {
@@ -30,6 +34,8 @@ struct Exemple {
     pi: Vec<f32>,
     q: f32,
     equipe: u8,
+    /// main réelle de l'adversaire (cible auxiliaire de croyance), par code de pièce
+    main_adv: [i8; N_TYPES],
 }
 
 struct Emplacement {
@@ -52,6 +58,11 @@ pub struct Stats {
     pub decisions: u64,
     pub recherches: u64,
     pub evaluations: u64,
+    pub parties_draft: u64,
+    /// parties avec draft gagnées par le premier à choisir (A)
+    pub victoires_choisit: u64,
+    /// parties gagnées par le premier joueur de la manche 1
+    pub victoires_premier: u64,
 }
 
 /// Exemples empaquetés (mêmes champs que `empaqueter`, flottants en f32).
@@ -69,6 +80,11 @@ pub struct Donnees {
     pub n_act: Vec<i16>,
     pub z: Vec<f32>,
     pub q: Vec<f32>,
+    /// cibles auxiliaires : contrôle final de chaque case vue (-1 hors Lieu, 0 neutre, 1 à moi,
+    /// 2 adverse), marge finale de marqueurs (adverses restants − miens), main adverse
+    pub lieux: Vec<i8>,
+    pub marge: Vec<i8>,
+    pub main_adv: Vec<i8>,
 }
 
 /// Lot de positions à évaluer, à plat (entiers i64, flottants f32).
@@ -89,6 +105,7 @@ pub struct Releve {
     pub graine: u64,
     pub actions: Vec<Action>,
     pub resultat: &'static str,
+    pub draft: bool,
 }
 
 /// Partie suivie pour la diffusion en direct (voir `ia/direct.py`).
@@ -98,6 +115,7 @@ pub struct Suivie {
     pub unites: [[u8; 4]; 2],
     pub actions: Vec<Action>,
     pub fini: bool,
+    pub draft: bool,
 }
 
 fn instantane(e: &Emplacement, fini: bool) -> Suivie {
@@ -107,6 +125,7 @@ fn instantane(e: &Emplacement, fini: bool) -> Suivie {
         unites: [e.jeu.e.joueurs[0].unites, e.jeu.e.joueurs[1].unites],
         actions: e.journal.clone(),
         fini,
+        draft: e.jeu.e.draft,
     }
 }
 
@@ -175,8 +194,14 @@ impl AutoJeu {
         loop {
             while self.emplacements.len() < self.p.simultanees && self.lances < self.p.parties {
                 let graine = self.rng.next_u64() % (1u64 << 31);
+                let draft = self.p.p_draft > 0.0 && self.rng.uniforme() < self.p.p_draft;
+                let jeu = if draft {
+                    Partie::nouvelle_draft(graine, None, None, self.p.max_manches)
+                } else {
+                    Partie::nouvelle(graine, None, None, self.p.max_manches)
+                };
                 self.emplacements.push(Emplacement {
-                    jeu: Partie::nouvelle(graine, None, None, self.p.max_manches),
+                    jeu,
                     graine,
                     exemples: Vec::new(),
                     recherche: None,
@@ -220,8 +245,15 @@ impl AutoJeu {
                 self.stats.decisions += 1;
                 continue;
             }
-            let complet = self.rng.uniforme() < self.p.p_complete;
-            let sims = if complet { self.p.simulations } else { self.p.simulations_rapides };
+            let en_draft = e.jeu.e.en_draft;
+            let complet = en_draft || self.rng.uniforme() < self.p.p_complete;
+            let sims = if en_draft {
+                self.p.simulations_draft
+            } else if complet {
+                self.p.simulations
+            } else {
+                self.p.simulations_rapides
+            };
             let params = self.params_recherche(sims);
             let graine = self.rng.next_u64();
             let e = &mut self.emplacements[i];
@@ -241,7 +273,13 @@ impl AutoJeu {
         if e.complet {
             let mut acts = Vec::with_capacity(res.legal.len() * ACT_F);
             encoder_actions(&e.jeu, &res.legal, &mut acts);
+            let adv = &e.jeu.e.joueurs[1 - e.jeu.au_trait() as usize];
+            let mut main_adv = [0i8; N_TYPES];
+            for &c in adv.main.as_slice() {
+                main_adv[c as usize] += 1;
+            }
             e.exemples.push(Exemple {
+                main_adv,
                 obs: encoder_etat(&e.jeu),
                 acts,
                 pi: res.politique.clone(),
@@ -277,23 +315,51 @@ impl AutoJeu {
         let s = &mut self.stats;
         s.parties += 1;
         s.manches += g.e.manche as u64;
+        if g.e.gagnant >= 0 && g.e.gagnant as u8 == g.equipe(g.e.premier) {
+            s.victoires_premier += 1;
+        }
+        if g.e.draft {
+            s.parties_draft += 1;
+            if g.e.gagnant >= 0 && g.e.gagnant as u8 == g.equipe(g.e.choisit) {
+                s.victoires_choisit += 1;
+            }
+        }
         match g.e.gagnant {
             -1 => s.nulles += 1,
             0 => s.victoires_blanc += 1,
             _ => s.victoires_noir += 1,
         }
+        let pl = plateau();
         for ex in &e.exemples {
             let z = if g.e.gagnant < 0 { 0.0 } else if g.e.gagnant as u8 == ex.equipe { 1.0 } else { -1.0 };
-            self.empaqueter(ex, z);
+            let t = ex.equipe;
+            let mut lieux = [-1i8; N_CASES];
+            for &l in &pl.lieux {
+                let v = if t == 0 { l as usize } else { pl.rotation[l as usize] as usize };
+                let c = g.e.controle[l as usize];
+                lieux[v] = if c < 0 { 0 } else if c as u8 == t { 1 } else { 2 };
+            }
+            let marge = (g.e.marqueurs[1 - t as usize] - g.e.marqueurs[t as usize]).clamp(-4, 4);
+            self.empaqueter(ex, z, &lieux, marge);
         }
+        // relevés tirés au hasard (réservoir) : les premières parties finies sont les plus courtes
+        let r = Releve { graine: e.graine, actions: e.journal.clone(), resultat: g.resultat(), draft: g.e.draft };
         if self.releves.len() < self.p.releves {
-            self.releves.push(Releve { graine: e.graine, actions: e.journal.clone(), resultat: g.resultat() });
+            self.releves.push(r);
+        } else if self.p.releves > 0 {
+            let k = (self.rng.next_u64() % self.stats.parties) as usize;
+            if k < self.p.releves {
+                self.releves[k] = r;
+            }
         }
     }
 
-    fn empaqueter(&mut self, ex: &Exemple, z: f32) {
+    fn empaqueter(&mut self, ex: &Exemple, z: f32, lieux: &[i8; N_CASES], marge: i8) {
         let d = &mut self.donnees;
         d.n += 1;
+        d.lieux.extend_from_slice(lieux);
+        d.marge.push(marge);
+        d.main_adv.extend_from_slice(&ex.main_adv);
         d.cell_i.extend(ex.obs.cell_i.iter().map(|&v| v as i8));
         d.cell_f.extend_from_slice(&ex.obs.cell_f);
         d.unit_i.extend(ex.obs.unit_i.iter().map(|&v| v as i8));

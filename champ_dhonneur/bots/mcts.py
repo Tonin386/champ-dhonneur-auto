@@ -46,6 +46,8 @@ class MCTSBot(Bot):
         legal = game.legal_actions()
         if len(legal) == 1:
             return legal[0]
+        if game.in_draft:   # des parties aléatoires ne départagent pas les compositions
+            return self.rng.choice(legal)
         me = game.to_move
         root = Node(game.team(me))
         deadline = time.time() + self.time_limit if self.time_limit else None

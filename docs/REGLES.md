@@ -31,7 +31,7 @@ code à modifier.
 | D | Porte étendard | 5 | Déplace d'une case une unité alliée à ≤ 2 cases ; elle finit à ≤ 2 cases du Porte étendard. |
 | E | Éclaireur | 5 | Peut être déployé sur toute case libre adjacente à une unité alliée. |
 | F | Fantassin | 5 | Deux unités simultanées ; tactique : chacun des deux manœuvre. |
-| G | Garde royale | 5 | Tactique avec le Sceau royal : se déplace d'une case. Attaquée, peut perdre une pièce de la réserve au lieu de sa pile. |
+| G | Garde royale | 5 | Tactique avec le Sceau royal : se déplace de 1 ou 2 cases (chemin libre, pas forcément en ligne droite) vers un Lieu libre contrôlé par son équipe. Attaquée, peut perdre une pièce de la réserve au lieu de sa pile. |
 | H | Cavalerie légère | 5 | Se déplace de 2 cases. |
 | K | Capitaine | 5 | Une unité alliée à ≤ 2 cases effectue une attaque classique. |
 | L | Lancier | 4 | 1 ou 2 cases en ligne droite vers des cases libres, puis attaque obligatoire dans la même direction. N'attaque qu'ainsi. |
@@ -57,4 +57,8 @@ Total : 74 pièces, conforme au matériel.
 8. **Garde royale** : la défense par la réserve est un choix du défenseur (décision intercalée).
 9. **Piquier** : pas de riposte contre les tirs à 2 cases (Archer, Arbalétrier).
 10. **Berserk** : ses manœuvres supplémentaires sont déplacer, contrôler ou attaquer.
-11. Garde-fou de simulation : partie nulle après 150 manches (`Game(max_rounds=…)`).
+11. **Garde royale (tactique)** : texte de la carte française, « de 1 ou 2 cases vers un Lieu que vous
+    contrôlez » ; le chemin peut bifurquer (interprétation courante) mais la case intermédiaire doit être libre.
+12. **Mise en place avancée** (`Game(units="draft")`) : 8 cartes tirées au hasard, choix un par un
+    (A1 B2 A2 B2 A1, manche 0), puis B prend l'Initiative et commence.
+13. Garde-fou de simulation : partie nulle après 150 manches (`Game(max_rounds=…)`).

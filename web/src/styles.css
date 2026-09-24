@@ -505,3 +505,8 @@ table.comptes td.faux { color: var(--attaque); font-weight: 700; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* mise en place avancée : cartes à choisir */
+.joueur .bloc.draft .cartes { flex-wrap: wrap; }
+.joueur .carte.jouable { cursor: pointer; outline: 2px solid transparent; transition: outline-color .15s; }
+.joueur .carte.jouable:hover, .joueur .carte.jouable:focus-visible { outline-color: var(--accent, #c9a227); }

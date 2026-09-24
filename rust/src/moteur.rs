@@ -84,11 +84,17 @@ pub const PASS: u8 = 8;
 pub const SKIP: u8 = 9;
 pub const RG_RESERVE: u8 = 10;
 pub const RG_UNIT: u8 = 11;
+pub const DRAFT: u8 = 12;
 
-pub const NOMS_TYPES: [&str; 12] = [
+pub const NOMS_TYPES: [&str; 13] = [
     "deploy", "bolster", "move", "control", "attack", "tactic", "initiative", "recruit", "pass",
-    "skip", "rg_reserve", "rg_unit",
+    "skip", "rg_reserve", "rg_unit", "draft",
 ];
+
+/// Mise en place avancée (livret p.12) : 8 cartes, ordre des choix en décalage par rapport au
+/// premier à choisir (A1 B2 A2 B2 A1).
+pub const N_CARTES: usize = 8;
+pub const ORDRE_DRAFT: [u8; N_CARTES] = [0, 1, 1, 0, 0, 1, 1, 0];
 
 /// Une décision (champs identiques au `Action` Python ; 0 = absent).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -200,7 +206,8 @@ impl<const CAP: usize> Pile<CAP> {
 #[derive(Clone, Copy)]
 pub struct Joueur {
     pub equipe: u8,
-    pub unites: [u8; 4],
+    pub unites: [u8; 4], // triées ; pendant le draft, les n_unites premières seulement
+    pub n_unites: u8,
     pub sac: Pile<24>,
     pub main: Pile<24>,
     pub def_visible: Pile<24>,
@@ -211,7 +218,22 @@ pub struct Joueur {
 
 impl Joueur {
     pub fn possede(&self, u: u8) -> bool {
-        self.unites.contains(&u)
+        u != 0 && self.unites.contains(&u)
+    }
+    pub fn unites(&self) -> &[u8] {
+        &self.unites[..self.n_unites as usize]
+    }
+    /// Remplit sac et réserve à partir des unités (mise en place).
+    fn remplir_sac(&mut self) {
+        self.sac.clear();
+        self.reserve = [0; N_TYPES];
+        self.perdues = [0; N_TYPES];
+        for &u in &self.unites {
+            self.sac.push(u);
+            self.sac.push(u);
+            self.reserve[u as usize] = NOMBRE[u as usize] - 2;
+        }
+        self.sac.push(ROYAL);
     }
 }
 
@@ -270,6 +292,13 @@ pub struct Etat {
     pub fini: bool,
     pub max_manches: u16,
     pub graine: u64,
+    // mise en place avancée
+    pub draft: bool,     // partie commencée par un draft
+    pub en_draft: bool,  // draft en cours
+    pub cartes: [u8; N_CARTES],
+    pub dispo: u16,      // bit u-1 : carte u encore disponible
+    pub etape_draft: u8,
+    pub choisit: u8,     // joueur qui choisit la première carte (A)
 }
 
 #[derive(Clone)]
@@ -303,6 +332,7 @@ impl Partie {
         let vide = Joueur {
             equipe: 0,
             unites: [0; 4],
+            n_unites: 0,
             sac: Pile::new(),
             main: Pile::new(),
             def_visible: Pile::new(),
@@ -314,12 +344,8 @@ impl Partie {
         for (i, j) in joueurs.iter_mut().enumerate() {
             j.equipe = i as u8;
             j.unites = unites[i];
-            for &u in &unites[i] {
-                j.sac.push(u);
-                j.sac.push(u);
-                j.reserve[u as usize] = NOMBRE[u as usize] - 2;
-            }
-            j.sac.push(ROYAL);
+            j.n_unites = 4;
+            j.remplir_sac();
         }
         let pl = plateau();
         let mut controle = [-1i8; N_CASES];
@@ -350,10 +376,89 @@ impl Partie {
             fini: false,
             max_manches,
             graine,
+            draft: false,
+            en_draft: false,
+            cartes: [0; N_CARTES],
+            dispo: 0,
+            etape_draft: 0,
+            choisit: 0,
         };
         let mut p = Partie { e, rng };
+        for (k, &u) in unites[0].iter().chain(unites[1].iter()).enumerate() {
+            p.e.cartes[k] = u;
+        }
+        p.e.cartes.sort();
         p.debut_manche();
         p
+    }
+
+    /// Équivalent de `Game("2J", "draft", seed, pool=cartes, draft_first=choisit)`.
+    pub fn nouvelle_draft(graine: u64, cartes: Option<[u8; N_CARTES]>, choisit: Option<u8>, max_manches: u16) -> Partie {
+        let mut mise = PyRandom::new(graine as u128);
+        let mut deck: Vec<u8> = (1..=16).collect();
+        mise.shuffle(&mut deck);
+        let mut c = match cartes {
+            Some(c) => c,
+            None => {
+                let mut c = [0u8; N_CARTES];
+                c.copy_from_slice(&deck[..N_CARTES]);
+                c
+            }
+        };
+        c.sort();
+        let choisit = match choisit {
+            Some(a) => a,
+            None => mise.randbelow(2) as u8,
+        };
+        // armées fictives pour construire l'état, vidées aussitôt (aucun tirage consommé)
+        let mut p = Partie::nouvelle(graine, Some([[1, 2, 3, 4], [5, 6, 7, 8]]), Some(1 - choisit), max_manches);
+        let rng = Pioche::Python(Box::new(PyRandom::new(graine as u128 * 7919 + 17)));
+        p.rng = rng;
+        for j in p.e.joueurs.iter_mut() {
+            j.unites = [0; 4];
+            j.n_unites = 0;
+            j.sac.clear();
+            j.main.clear();
+            j.reserve = [0; N_TYPES];
+            j.perdues = [0; N_TYPES];
+        }
+        p.e.manche = 0;
+        p.e.courant = choisit;
+        p.e.draft = true;
+        p.e.en_draft = true;
+        p.e.cartes = c;
+        p.e.dispo = c.iter().fold(0u16, |m, &u| m | 1 << (u - 1));
+        p.e.etape_draft = 0;
+        p.e.choisit = choisit;
+        p
+    }
+
+    fn choisir_carte(&mut self, u: u8) -> Result<(), CoupIllegal> {
+        if u == 0 || u > 16 || self.e.dispo & (1 << (u - 1)) == 0 {
+            return Err(CoupIllegal(format!("carte indisponible : {u}")));
+        }
+        self.e.dispo &= !(1 << (u - 1));
+        let j = &mut self.e.joueurs[self.e.courant as usize];
+        j.unites[j.n_unites as usize] = u;
+        j.n_unites += 1;
+        let n = j.n_unites as usize;
+        j.unites[..n].sort();
+        self.e.etape_draft += 1;
+        if (self.e.etape_draft as usize) < N_CARTES {
+            self.e.courant = (self.e.choisit + ORDRE_DRAFT[self.e.etape_draft as usize]) % 2;
+            return Ok(());
+        }
+        self.e.en_draft = false;
+        for j in self.e.joueurs.iter_mut() {
+            j.remplir_sac();
+        }
+        let b = 1 - self.e.choisit;
+        self.e.premier = b;
+        self.e.initiative = b;
+        self.e.premier_manche = b;
+        self.e.courant = b;
+        self.debut_manche();
+        Ok(())
     }
 
     /// Copie jetable pour une recherche : pioches tirées par un générateur rapide.
@@ -492,6 +597,14 @@ impl Partie {
         if self.e.fini {
             return;
         }
+        if self.e.en_draft {
+            for u in 1..=16u8 {
+                if self.e.dispo & (1 << (u - 1)) != 0 {
+                    out.push(Action::avec(DRAFT, 0, u, &[], 0));
+                }
+            }
+            return;
+        }
         if let Some(pd) = self.attente() {
             let pd = *pd;
             self.actions_attente(&pd, out);
@@ -507,14 +620,14 @@ impl Partie {
     }
 
     pub fn peut_prendre_initiative(&self, p: u8) -> bool {
-        !self.e.init_bougee && self.e.premier_manche != p && self.equipe(self.e.initiative) != self.equipe(p)
+        !self.e.en_draft && !self.e.init_bougee && self.e.premier_manche != p && self.equipe(self.e.initiative) != self.equipe(p)
     }
 
     fn actions_piece(&self, p: u8, piece: u8, out: &mut Vec<Action>) {
         let pl = plateau();
         let j = &self.e.joueurs[p as usize];
         out.push(Action::simple(PASS, piece));
-        for &u in &j.unites {
+        for &u in j.unites() {
             if j.reserve[u as usize] > 0 {
                 out.push(Action::avec(RECRUIT, piece, 0, &[], u));
             }
@@ -524,11 +637,26 @@ impl Partie {
         }
         let mut pos = [0u8; 16];
         if piece == ROYAL {
+            // 1 ou 2 cases (chemin libre, pas forcément en ligne droite) vers un Lieu libre
+            // contrôlé par son équipe
             let n = self.unites_de(p, U_G, &mut pos);
+            let t = self.equipe(p) as i8;
             for &ps in &pos[..n] {
-                for &nb in &pl.voisins[ps as usize] {
-                    if self.libre(nb) {
-                        out.push(Action::avec(TACTIC, ROYAL, U_G, &[ps, nb], 0));
+                let mut dests = 0u64;
+                for &mid in &pl.voisins[ps as usize] {
+                    if !self.libre(mid) {
+                        continue;
+                    }
+                    dests |= 1 << mid;
+                    for &d in &pl.voisins[mid as usize] {
+                        if d != ps && self.libre(d) {
+                            dests |= 1 << d;
+                        }
+                    }
+                }
+                for d in 0..N_CASES as u8 {
+                    if dests & (1u64 << d) != 0 && pl.est_lieu[d as usize] && self.e.controle[d as usize] == t {
+                        out.push(Action::avec(TACTIC, ROYAL, U_G, &[ps, d], 0));
                     }
                 }
             }
@@ -768,6 +896,12 @@ impl Partie {
     pub fn jouer(&mut self, a: &Action) -> Result<(), CoupIllegal> {
         if self.e.fini {
             return Err(CoupIllegal("La partie est terminée".into()));
+        }
+        if self.e.en_draft {
+            if a.genre != DRAFT {
+                return Err(CoupIllegal(format!("choix de carte attendu : {:?}", a)));
+            }
+            return self.choisir_carte(a.unite);
         }
         let p = self.au_trait();
         if self.e.n_attentes > 0 {

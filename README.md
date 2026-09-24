@@ -209,5 +209,10 @@ apprentissage GPU reprenable, évaluation Elo automatique, bot `ia` dans la cons
 (avec conseil IA), images Docker GPU. Reste à lancer l'entraînement long sur GPU.
 
 **Phase 3 — en cours.** Fait : moteur d'auto-jeu porté en Rust (PyO3), entraînement continu,
-spectateur grand écran. Reste : inférence plus rapide (`torch.compile`, le GPU étant désormais le
-goulot), évaluations avec le moteur Rust, apprentissage du choix des unités, 4 joueurs.
+spectateur grand écran ; **génération 2** : mise en place avancée (draft) dans le moteur, la
+recherche et l'apprentissage (`Game(units="draft")`, 75 % des parties d'auto-jeu), règle de la
+Garde royale corrigée (1 ou 2 cases vers un Lieu contrôlé), encodage v2 (cartes disponibles,
+pointeur contextuel), têtes auxiliaires, poids moyennés (EMA), évaluations en draft, valeur
+dynamique des unités (`runs/<nom>/unites.jsonl`, voir docs/IA.md). La génération 1 est archivée
+dans `archives/`. Reste : inférence plus rapide (CUDA graphs, `torch.compile`), évaluations avec le
+moteur Rust, solveur exact du draft, vue « Unités » du tableau de bord, 4 joueurs.

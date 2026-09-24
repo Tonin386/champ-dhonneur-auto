@@ -38,14 +38,16 @@ def bastions(game: Game) -> list[int]:
     return [sum(1 for t in game.control.values() if t == e) for e in (0, 1)]
 
 
-def depuis_valeur(v_or: float) -> float:
-    """Espérance de gain d'Or (dans [-1, 1]) → score (10 = un bastion d'avance)."""
+def depuis_valeur(v_or: float, k: float | None = None) -> float:
+    """Espérance de gain d'Or (dans [-1, 1]) → score (10 = un bastion d'avance).
+
+    `k` : échelle recalibrée par l'entraînement du modèle (runs/<nom>/echelle.json), sinon K."""
     v = max(-0.9999, min(0.9999, v_or))
-    return POINTS_BASTION * math.atanh(v) / K
+    return POINTS_BASTION * math.atanh(v) / (k or K)
 
 
-def vers_valeur(score: float) -> float:
-    return math.tanh(score * K / POINTS_BASTION)
+def vers_valeur(score: float, k: float | None = None) -> float:
+    return math.tanh(score * (k or K) / POINTS_BASTION)
 
 
 def texte_score(score: float) -> str:
@@ -90,7 +92,7 @@ class Solveur:
 
     def chercher(self, game: Game, max_coups: int = 3) -> dict | None:
         """{"equipe", "coups", "action"} (action : premier coup gagnant si l'équipe a le trait)."""
-        if game.done or game.mode != "2J":
+        if game.done or game.mode != "2J" or game.in_draft:
             return None
         self.manche = game.round
         self.noeuds, self.fin = 0, time.monotonic() + self.secondes
@@ -247,8 +249,7 @@ def calibrer(fichiers) -> dict:
         texte = open(f, encoding="utf-8").read()
         z = {"1-0": 1.0, "0-1": -1.0}.get(parse_headers(texte).get("Resultat", ""), 0.0)
         fin = import_record(texte)
-        g = Game(fin.mode, [p.units for p in fin.players], seed=fin.seed, first=fin.first_player,
-                 max_rounds=fin.max_rounds)
+        g = fin.neuve()
         for _, _, a in fin.log:
             if not g.pending:
                 b = bastions(g)

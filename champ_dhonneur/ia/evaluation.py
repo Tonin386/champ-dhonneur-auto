@@ -45,11 +45,17 @@ def graines_appariees(paires: int, seed: int) -> list[int]:
 
 
 def match(a, b, paires: int = 20, seed: int = 0, max_manches: int = 150,
-          simultanees: int = 32, graines: list[int] | None = None, releves: int = 0) -> dict:
+          simultanees: int = 32, graines: list[int] | None = None, releves: int = 0,
+          protocole: str = "aleatoire") -> dict:
     """Joue 2 × `paires` parties entre a et b. Renvoie les statistiques du point de vue de a.
 
     `releves` : nombre de relevés .nch (premières parties terminées) renvoyés dans res["releves"].
+    `protocole` : "aleatoire" (armées tirées au hasard) ou "draft" (mise en place avancée ; les
+    deux parties d'une paire ont les mêmes 8 cartes et le même premier siège à choisir, a et b
+    échangent leurs camps : l'avantage du premier choix s'annule). Les bots sans recherche
+    (glouton, mcts…) choisissent leurs cartes au hasard.
     """
+    draft = protocole == "draft"
     if graines is None:
         graines = graines_appariees(paires, seed)
     specs = []
@@ -62,8 +68,7 @@ def match(a, b, paires: int = 20, seed: int = 0, max_manches: int = 150,
     while todo or slots:
         while todo and len(slots) < simultanees:
             s, side = todo.pop()
-            g = Game("2J", seed=s)
-            g.max_rounds = max_manches
+            g = Game("2J", "draft" if draft else None, seed=s, max_rounds=max_manches)
             agents = [a, b] if side == 0 else [b, a]
             slots.append({"g": g, "agents": agents, "side": side, "gen": None, "req": None,
                           "rech": [x.nouvelle_recherche(s + i) if isinstance(x, AgentRecherche) else None
@@ -80,7 +85,7 @@ def match(a, b, paires: int = 20, seed: int = 0, max_manches: int = 150,
                 if len(legal) == 1:
                     g.apply(legal[0])
                 elif isinstance(ag, AgentBot):
-                    g.apply(ag.bot.choose(g))
+                    g.apply(ag.bot.rng.choice(legal) if g.in_draft else ag.bot.choose(g))
                 else:
                     slot["gen"] = slot["rech"][p].generateur(g)
                     slot["req"] = next(slot["gen"])
@@ -205,17 +210,19 @@ def agent_depuis_spec(spec: str, simulations: int = 200, dispositif: str = "cpu"
 
 
 def _match_morceau(args):
-    (spec_a, nom_a, spec_b, nom_b, sims_a, sims_b, dispositif, graines, max_manches, releves) = args
+    (spec_a, nom_a, spec_b, nom_b, sims_a, sims_b, dispositif, graines, max_manches, releves,
+     protocole) = args
     a = agent_depuis_spec(spec_a, sims_a, dispositif, nom_a)
     b = agent_depuis_spec(spec_b, sims_b, dispositif, nom_b)
     return match(a, b, graines=graines, max_manches=max_manches, simultanees=max(1, len(graines) * 2),
-                 releves=releves)
+                 releves=releves, protocole=protocole)
 
 
 def match_parallele(spec_a: str, spec_b: str, paires: int, seed: int, executeur,
                     n_morceaux: int, simulations: int = 200, simulations_b: int | None = None,
                     dispositif: str = "cpu", max_manches: int = 150,
-                    nom_a: str | None = None, nom_b: str | None = None, releves: int = 0) -> dict:
+                    nom_a: str | None = None, nom_b: str | None = None, releves: int = 0,
+                    protocole: str = "aleatoire") -> dict:
     """Même résultat que `match`, réparti sur les processus d'un exécuteur (ProcessPoolExecutor)."""
     graines = graines_appariees(paires, seed)
     n = max(1, min(n_morceaux, len(graines)))
@@ -225,7 +232,7 @@ def match_parallele(spec_a: str, spec_b: str, paires: int, seed: int, executeur,
     parts = [releves // len(morceaux) + (1 if i < releves % len(morceaux) else 0)
              for i in range(len(morceaux))]
     taches = [(spec_a, nom_a or spec_a, spec_b, nom_b or spec_b, simulations,
-               simulations_b or simulations, dispositif, m, max_manches, r)
+               simulations_b or simulations, dispositif, m, max_manches, r, protocole)
               for m, r in zip(morceaux, parts)]
     res = {"victoires": 0, "defaites": 0, "nulles": 0, "parties": 0, "manches": 0}
     textes: list[str] = []

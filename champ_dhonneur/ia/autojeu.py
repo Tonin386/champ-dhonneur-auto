@@ -11,7 +11,11 @@ Techniques utilisées :
     joués avec une recherche rapide, ne servent qu'à la cible de valeur, ce
     qui multiplie les parties jouées pour un même budget ;
   * décisions forcées (une seule action légale) jouées sans recherche ni
-    exemple enregistré.
+    exemple enregistré ;
+  * mise en place avancée : une part `p_draft` des parties commence par le draft des
+    unités, dont chaque choix reçoit une recherche complète ;
+  * cibles auxiliaires (à la KataGo) : contrôle final des Lieux, marge finale de
+    marqueurs, main réelle de l'adversaire.
 """
 from __future__ import annotations
 
@@ -24,7 +28,8 @@ import numpy as np
 from ..engine import Game
 from ..notation import export_record
 from .direct import Diffuseur
-from .encodage import ACT_F, NONE_CELL, STATE_KEYS, encode_actions, encode_state
+from .encodage import (ACT_F, COIN_ID, N_CELLS, N_COIN_TYPES, NONE_CELL, PERM, SPEC, STATE_KEYS,
+                       encode_actions, encode_state)
 from .recherche import ParamsRecherche, RechercheGumbel
 
 A_MAX = 64   # actions stockées par exemple (le maximum observé est ~45)
@@ -43,8 +48,10 @@ class ParamsAutoJeu:
     c_visit: float = 50.0
     c_scale: float = 0.1
     duree_max: float = 0.0     # > 0 : arrêt après ce nombre de secondes (mesures de débit)
-    releves: int = 0           # relevés .nch des premières parties terminées (visualisation)
+    releves: int = 0           # relevés .nch de parties terminées tirées au hasard (visualisation)
     direct: str = ""           # fichier de diffusion d'une partie en cours (ia/direct.py), "" = aucune
+    p_draft: float = 0.0       # part des parties commencées par la mise en place avancée
+    simulations_draft: int = 128   # simulations des choix de cartes (recherches complètes)
 
 
 def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tuple[dict, dict]:
@@ -55,15 +62,16 @@ def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tupl
     exemples: list[dict] = []
     releves: list[str] = []
     stats = {"parties": 0, "victoires_blanc": 0, "victoires_noir": 0, "nulles": 0,
-             "manches": 0, "decisions": 0, "recherches": 0, "evaluations": 0}
+             "manches": 0, "decisions": 0, "recherches": 0, "evaluations": 0,
+             "parties_draft": 0, "victoires_choisit": 0, "victoires_premier": 0}
     slots: list[dict] = []
     lances = 0
     t0 = time.time()
     diffuseur = Diffuseur(P.direct, P.parties) if P.direct else None
 
     def nouvelle():
-        g = Game("2J", seed=rng.randrange(2**31))
-        g.max_rounds = P.max_manches
+        draft = P.p_draft > 0 and rng.random() < P.p_draft
+        g = Game("2J", "draft" if draft else None, seed=rng.randrange(2**31), max_rounds=P.max_manches)
         return {"g": g, "ex": [], "gen": None, "req": None, "complet": False}
 
     def terminer(slot):
@@ -76,12 +84,22 @@ def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tupl
             stats["victoires_blanc"] += 1
         else:
             stats["victoires_noir"] += 1
+        if g.winner is not None and g.winner == g.team(g.first_player):
+            stats["victoires_premier"] += 1
+        if g.draft is not None:
+            stats["parties_draft"] += 1
+            if g.winner is not None and g.winner == g.team(g.draft.first):
+                stats["victoires_choisit"] += 1
         for ex in slot["ex"]:
             ex["z"] = 0.0 if g.winner is None else (1.0 if g.winner == ex["equipe"] else -1.0)
+            ex.update(cibles_finales(g, ex["equipe"]))
             exemples.append(ex)
+        # relevé complet (pièces cachées incluses) : il se rejoue à l'identique ; tirage par
+        # réservoir (les premières parties terminées sont les plus courtes)
         if len(releves) < P.releves:
-            # relevé complet (pièces cachées incluses) : il se rejoue à l'identique
             releves.append(export_record(g, headers={"Type": "autojeu"}))
+        elif P.releves and (k := rng.randrange(stats["parties"])) < P.releves:
+            releves[k] = export_record(g, headers={"Type": "autojeu"})
 
     while slots or lances < P.parties:
         if P.duree_max and time.time() - t0 > P.duree_max:
@@ -104,8 +122,9 @@ def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tupl
                     g.apply(legal[0])
                     stats["decisions"] += 1
                     continue
-                slot["complet"] = rng.random() < P.p_complete
-                sims = P.simulations if slot["complet"] else P.simulations_rapides
+                slot["complet"] = g.in_draft or rng.random() < P.p_complete
+                sims = (P.simulations_draft if g.in_draft
+                        else P.simulations if slot["complet"] else P.simulations_rapides)
                 slot["gen"] = rech.generateur(g, sims)
                 slot["req"] = next(slot["gen"])
                 break
@@ -130,6 +149,7 @@ def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tupl
                     ex["pi"] = res.politique
                     ex["q"] = res.valeur
                     ex["equipe"] = g.team(g.to_move)
+                    ex["main_adv"] = main_adverse(g)
                     slot["ex"].append(ex)
                 g.apply(res.action)
                 stats["decisions"] += 1
@@ -152,6 +172,26 @@ def jouer(evaluateur, P: ParamsAutoJeu, seed: int | None = None, moteur: str = "
     if moteur == "rust" and not rust:
         raise RuntimeError("moteur Rust demandé mais indisponible (module champ_rs absent ?)")
     return rs.jouer_parties_rs(evaluateur, P, seed) if rust else jouer_parties(evaluateur, P, seed)
+
+
+def main_adverse(g: Game) -> np.ndarray:
+    """Main réelle de l'adversaire du joueur au trait, par type de pièce (cible de croyance)."""
+    m = np.zeros(N_COIN_TYPES, np.int8)
+    for c in g.players[1 - g.to_move].hand:
+        m[COIN_ID[c]] += 1
+    return m
+
+
+def cibles_finales(g: Game, equipe: int) -> dict:
+    """Contrôle final de chaque case vue par `equipe` (-1 hors Lieu, 0 neutre, 1 à elle,
+    2 adverse) et marge finale de marqueurs (adverses restants − siens, dans [-4, 4])."""
+    lieux = np.full(N_CELLS, -1, np.int8)
+    perm = PERM[equipe]
+    for loc in SPEC.locations:
+        c = g.control[loc]
+        lieux[perm[loc]] = 0 if c is None else (1 if c == equipe else 2)
+    marge = max(-4, min(4, g.markers_left[1 - equipe] - g.markers_left[equipe]))
+    return {"lieux": lieux, "marge": marge}
 
 
 def empaqueter(exemples: list[dict]) -> dict[str, np.ndarray]:
@@ -179,6 +219,10 @@ def empaqueter(exemples: list[dict]) -> dict[str, np.ndarray]:
     out["acts"], out["pi"], out["n_act"] = acts, pi, n_act
     out["z"] = np.array([e["z"] for e in exemples], np.float32)
     out["q"] = np.array([e["q"] for e in exemples], np.float32)
+    out["lieux"] = (np.stack([e["lieux"] for e in exemples]) if n else np.zeros((0, N_CELLS), np.int8))
+    out["marge"] = np.array([e["marge"] for e in exemples], np.int8)
+    out["main_adv"] = (np.stack([e["main_adv"] for e in exemples]) if n
+                       else np.zeros((0, N_COIN_TYPES), np.int8))
     return out
 
 

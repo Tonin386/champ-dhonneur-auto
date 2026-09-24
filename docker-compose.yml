@@ -61,6 +61,7 @@ services:
     build: *build-ia
     <<: [*gpu, *utilisateur]
     init: true
+    stop_grace_period: 60s   # laisse l'itération en cours s'interrompre proprement
     shm_size: "8gb"
     volumes: ["./runs:/app/runs", "./configs:/app/configs:ro"]
     # reprise automatique : relancé après un arrêt, un plantage ou un redémarrage de la machine

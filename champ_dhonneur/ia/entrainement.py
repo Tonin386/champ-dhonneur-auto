@@ -34,6 +34,7 @@ import numpy as np
 
 from .autojeu import ParamsAutoJeu, concatener, jouer
 from .direct import ecrire_phase, preparer_tables
+from .encodage import PENDING_ID
 from .modele import ConfigModele
 
 
@@ -60,6 +61,17 @@ class ConfigEntrainement:
     reutilisation: float = 4.0
     poids_valeur: float = 1.0
     melange_q: float = 0.25
+    # mise en place avancée : poids des exemples de draft dans la perte de politique, part de la
+    # valeur de recherche dans leur cible de valeur (le résultat final y est très bruité)
+    poids_draft: float = 0.5
+    melange_q_draft: float = 0.5
+    # têtes auxiliaires (0 = désactivée) : contrôle final des Lieux, marge finale, main adverse
+    poids_aux: dict = field(default_factory=lambda: {"lieux": 0.15, "marge": 0.1, "main_adverse": 0.1})
+    ema: float = 0.0                 # > 0 : moyenne mobile des poids publiée (dernier.pt, meilleur.pt)
+    eval_protocole: str = "aleatoire"  # "draft" : les matchs d'évaluation commencent par le draft
+    # valeur dynamique des unités (ia/valeurs.py) et recalibrage de l'échelle du scoreur
+    unites: dict = field(default_factory=lambda: {"actif": False, "pools": 256, "pioches": 2,
+                                                  "bootstrap": 30, "ridge": 1.0})
     dispositif: str = "auto"
     dispositif_autojeu: str = "auto"
     moteur_autojeu: str = "auto"     # auto (Rust si compilé), rust ou python
@@ -226,8 +238,18 @@ class Entraineur:
         self.model = ReseauChamp(cfg.modele).to(self.dev)
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=cfg.lr,
                                      weight_decay=cfg.poids_decroissance, betas=(0.9, 0.99))
+        self.ema = None
+        if cfg.ema > 0:
+            import copy
+            self.ema = copy.deepcopy(self.model).requires_grad_(False)
         if ck is not None:
-            self.model.load_state_dict(ck["etat"])
+            if self.ema is not None:
+                self.ema.load_state_dict(ck["etat"])       # dernier.pt publie les poids moyennés
+            brut = self.dir / "modeles" / "brut.pt"
+            if self.ema is not None and brut.exists():
+                self.model.load_state_dict(torch.load(brut, map_location="cpu", weights_only=False)["etat"])
+            else:
+                self.model.load_state_dict(ck["etat"])
             if (self.dir / "optim.pt").exists():
                 self.opt.load_state_dict(torch.load(self.dir / "optim.pt", map_location=self.dev))
         self.fwd = torch.compile(self.model, dynamic=True) if cfg.compiler else self.model
@@ -279,6 +301,7 @@ class Entraineur:
             # l'heuristique est peu coûteuse : tous les coups reçoivent une cible
             params.simulations = cfg.amorce_simulations
             params.p_complete = 1.0
+            params.p_draft = 0.0     # l'heuristique ne sait pas évaluer une composition d'armée
         else:
             chemin = str(self.dir / "modeles" / "dernier.pt")
         n_w = max(1, cfg.travailleurs)
@@ -363,7 +386,29 @@ class Entraineur:
              "n_act": torch.from_numpy(b["n_act"].astype(np.int64)).to(self.dev),
              "z": torch.from_numpy(b["z"]).to(self.dev),
              "q": torch.from_numpy(b["q"]).to(self.dev)}
+        for k in ("lieux", "marge", "main_adv"):
+            if k in b:
+                y[k] = torch.from_numpy(b[k].astype(np.int64)).to(self.dev)
+        y["draft"] = x["glob_i"][:, 0] == PENDING_ID["draft"]
         return x, y
+
+    def _pertes_aux(self, aux: dict, y: dict) -> dict:
+        """Pertes des têtes auxiliaires (entropies croisées), absentes si les cibles manquent."""
+        F = self.torch.nn.functional
+        out = {}
+        if "lieux" in y:
+            t = y["lieux"]
+            out["lieux"] = F.cross_entropy(aux["lieux"].float().reshape(-1, 3), t.reshape(-1).clamp_min(0),
+                                           reduction="none").reshape(t.shape)[t >= 0].mean()
+        if "marge" in y:
+            out["marge"] = F.cross_entropy(aux["marge"].float(), y["marge"] + 4)
+        if "main_adv" in y:
+            jeu = ~y["draft"]
+            if jeu.any():
+                m = aux["main"][jeu].float()
+                out["main_adverse"] = F.cross_entropy(m.reshape(-1, m.shape[-1]),
+                                                      y["main_adv"][jeu].clamp(0, m.shape[-1] - 1).reshape(-1))
+        return out
 
     def valider(self, data: dict, maximum: int = 4096) -> dict:
         """Mesures sur des parties que le réseau n'a jamais vues (avant d'apprendre dessus).
@@ -377,7 +422,8 @@ class Entraineur:
             return {}
         idx = np.random.default_rng(0).permutation(n)[:maximum]
         out = {"kl": 0.0, "premier_coup": 0.0, "precision_valeur": 0.0, "erreur_valeur": 0.0}
-        tot = 0
+        dr = {"kl_draft": 0.0, "premier_coup_draft": 0.0}
+        tot = n_draft = 0
         self.model.eval()
         with torch.inference_mode():
             for s in range(0, len(idx), 512):
@@ -398,8 +444,16 @@ class Entraineur:
                 out["premier_coup"] += top.sum().item()
                 out["precision_valeur"] += prec.sum().item()
                 out["erreur_valeur"] += ((v - z) ** 2).sum().item()
+                d = y["draft"]
+                dr["kl_draft"] += kl[d].sum().item()
+                dr["premier_coup_draft"] += top[d].sum().item()
+                n_draft += int(d.sum().item())
                 tot += m
-        return {k: round(v / tot, 4) for k, v in out.items()}
+        res = {k: round(v / tot, 4) for k, v in out.items()}
+        if n_draft:
+            res.update({k: round(v / n_draft, 4) for k, v in dr.items()})
+        res["part_draft"] = round(n_draft / tot, 4)
+        return res
 
     def lr_actuel(self, it: int) -> float:
         cfg = self.cfg
@@ -422,6 +476,7 @@ class Entraineur:
         rng = np.random.default_rng(cfg.graine * 7 + it)
         self.model.train()
         cumul = {"perte_politique": 0.0, "perte_valeur": 0.0, "entropie": 0.0, "precision_valeur": 0.0}
+        poids_aux = {k: v for k, v in (cfg.poids_aux or {}).items() if v}
         amp = self.dev.type == "cuda"
         # bf16 sur GPU récents (Ampere+), sinon fp16 avec mise à l'échelle des gradients
         bf16 = amp and torch.cuda.is_bf16_supported()
@@ -433,21 +488,25 @@ class Entraineur:
                 grp["lr"] = self.lr_actuel(it)
             x, y = self._lot(rng)
             with torch.autocast(self.dev.type, dtype=dtype, enabled=amp):
-                logits, vlog = self.fwd(x)
+                logits, vlog, aux = self.fwd(x, aux=True)
             logits, vlog = logits.float(), vlog.float()
             mask = torch.arange(logits.shape[1], device=self.dev)[None] < y["n_act"][:, None]
             logp = torch.log_softmax(logits.masked_fill(~mask, -1e9), dim=-1)
             pi = y["pi"] / y["pi"].sum(-1, keepdim=True).clamp_min(1e-8)
-            l_pol = -(pi * logp.masked_fill(~mask, 0.0)).sum(-1).mean()
+            w = torch.where(y["draft"], cfg.poids_draft, 1.0)
+            l_pol = (w * -(pi * logp.masked_fill(~mask, 0.0)).sum(-1)).sum() / w.sum()
             z = y["z"]
             cible = torch.stack([(z > 0).float(), (z == 0).float(), (z < 0).float()], -1)
             mq = cfg.amorce_melange_q if it <= cfg.amorce_iterations else cfg.melange_q
-            if mq > 0:
-                q = y["q"].clamp(-1, 1)
-                cq = torch.stack([(1 + q) / 2, torch.zeros_like(q), (1 - q) / 2], -1)
-                cible = (1 - mq) * cible + mq * cq
+            mq = torch.where(y["draft"], max(mq, cfg.melange_q_draft), mq).unsqueeze(-1)
+            q = y["q"].clamp(-1, 1)
+            cq = torch.stack([(1 + q) / 2, torch.zeros_like(q), (1 - q) / 2], -1)
+            cible = (1 - mq) * cible + mq * cq
             l_val = -(cible * torch.log_softmax(vlog, -1)).sum(-1).mean()
             perte = l_pol + cfg.poids_valeur * l_val
+            pertes_aux = self._pertes_aux(aux, y) if poids_aux else {}
+            for k, l in pertes_aux.items():
+                perte = perte + poids_aux.get(k, 0.0) * l
             self.opt.zero_grad(set_to_none=True)
             self.scaler.scale(perte).backward()
             self.scaler.unscale_(self.opt)
@@ -455,6 +514,11 @@ class Entraineur:
             self.scaler.step(self.opt)
             self.scaler.update()
             self.etat["pas"] += 1
+            if self.ema is not None:
+                with torch.no_grad():   # moyenne mobile, avec démarrage progressif
+                    dec = min(cfg.ema, (1 + self.etat["pas"]) / (10 + self.etat["pas"]))
+                    for pe, pm in zip(self.ema.parameters(), self.model.parameters()):
+                        pe.lerp_(pm, 1 - dec)
             with torch.no_grad():
                 p = torch.softmax(logits.masked_fill(~mask, -1e9), -1)
                 ent = -(p * logp.masked_fill(~mask, 0.0)).sum(-1).mean()
@@ -465,6 +529,8 @@ class Entraineur:
             cumul["perte_valeur"] += l_val.item()
             cumul["entropie"] += ent.item()
             cumul["precision_valeur"] += prec.item()
+            for k, l in pertes_aux.items():
+                cumul[f"perte_{k}"] = cumul.get(f"perte_{k}", 0.0) + l.item()
         self.model.eval()
         out = {k: v / n_pas for k, v in cumul.items()}
         out["pas"] = n_pas
@@ -506,7 +572,7 @@ class Entraineur:
                 return match_parallele(chemin, spec, cfg.eval_paires, 10_000 + it, self.pool,
                                        n_morceaux=part, simulations=cfg.eval_simulations,
                                        dispositif=self.dev_auto, nom_a=nom, nom_b=nom_adv,
-                                       releves=cfg.releves_evaluation)
+                                       releves=cfg.releves_evaluation, protocole=cfg.eval_protocole)
             with ThreadPoolExecutor(len(adversaires)) as tex:
                 resultats = list(tex.map(jouer_contre, adversaires))
         else:
@@ -515,7 +581,7 @@ class Entraineur:
                 a = agent_depuis_spec(chemin, cfg.eval_simulations, str(self.dev), nom)
                 b = agent_depuis_spec(spec, cfg.eval_simulations, str(self.dev), nom_adv)
                 resultats.append(match(a, b, paires=cfg.eval_paires, seed=10_000 + it,
-                                       releves=cfg.releves_evaluation))
+                                       releves=cfg.releves_evaluation, protocole=cfg.eval_protocole))
         for (spec, nom_adv), r in zip(adversaires, resultats):
             court = "".join(c if c.isalnum() else "_" for c in nom_adv)
             for k, texte in enumerate(r.pop("releves", [])):
@@ -535,6 +601,18 @@ class Entraineur:
                 "matchs": {k: {c: v[c] for c in ("victoires", "nulles", "defaites", "score")}
                            for k, v in rapports.items()}}
 
+    def valeurs_unites(self, it: int, data: dict) -> dict:
+        """Valeur dynamique des unités (points du scoreur) avec le réseau publié (dernier.pt)."""
+        from ..score import K
+        from .evaluateurs import EvaluateurReseau
+        from .valeurs import etape
+        ev = EvaluateurReseau.depuis_fichier(str(self.dir / "modeles" / "dernier.pt"), str(self.dev))
+        try:
+            return etape(self.dir, it, ev, self.fenetre, data, self.cfg.unites, K)
+        except Exception as e:  # noqa: BLE001 — une mesure ne doit jamais arrêter l'entraînement
+            print(f"Valeur des unités : échec ({e})", flush=True)
+            return {"erreur": str(e)}
+
     def _purger_evalues(self) -> None:
         """Mode continu : ne garde que les `modeles_gardes` derniers modèles évalués."""
         n = self.cfg.modeles_gardes
@@ -550,8 +628,11 @@ class Entraineur:
     def sauver(self, it: int) -> None:
         from .modele import sauver
         m = self.dir / "modeles"
-        sauver(m / "dernier.tmp", self.model, {"iteration": it})
+        sauver(m / "dernier.tmp", self.ema if self.ema is not None else self.model, {"iteration": it})
         os.replace(m / "dernier.tmp", m / "dernier.pt")
+        if self.ema is not None:   # poids bruts (reprise de l'apprentissage)
+            sauver(m / "brut.tmp", self.model, {"iteration": it})
+            os.replace(m / "brut.tmp", m / "brut.pt")
         shutil.copy(m / "dernier.pt", m / f"iter_{it:04d}.pt")
         if self.cfg.purger_modeles and it > 1:
             prec = it - 1
@@ -635,6 +716,10 @@ class Entraineur:
             ligne = {"iteration": it, "exemples": n, "fenetre": self.taille_fenetre(),
                      "autojeu": st, "apprentissage": ap, "validation": val,
                      "temps": {"autojeu": round(t1 - t0, 1), "apprentissage": round(t2 - t1, 1)}}
+            if (cfg.unites or {}).get("actif") and not st.get("amorce"):
+                ligne["unites"] = self.valeurs_unites(it, data)
+                ligne["temps"]["unites"] = round(time.time() - t2, 1)
+                t2 = time.time()
             if cfg.eval_tous and (it % cfg.eval_tous == 0 or it == cfg.iterations) and ap.get("pas"):
                 if cfg.direct:
                     ecrire_phase(self.dir, "evaluation", it)
@@ -667,6 +752,10 @@ def _resume(l: dict) -> str:
         e = l["evaluation"]
         m = " ".join(f"{k}:{v['score']:.2f}" for k, v in e["matchs"].items())
         s += f"\n           évaluation : Elo {e['elo']:+.0f} (glouton = 0) | {m} | meilleur = {e['meilleur']}"
+    u = l.get("unites")
+    if u and "top" in u:
+        s += (f"\n           unités : K {u['K']:.2f}, meilleures {' '.join(u['top'])}, "
+              f"avantage du 1er choix {u['avantage_premier_choix']:+.1f} pts, R² {u['r2']:.2f}")
     return s
 
 

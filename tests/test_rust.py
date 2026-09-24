@@ -25,11 +25,13 @@ def etat_python(g: Game) -> dict:
         "manche": g.round, "courant": g.current, "au_trait": g.to_move, "fini": g.done,
         "gagnant": -1 if g.winner is None else g.winner, "marqueurs": list(g.markers_left),
         "premier": g.first_player, "initiative": g.initiative, "init_bougee": g.initiative_moved,
-        "premier_manche": g.round_first,
+        "premier_manche": g.round_first, "en_draft": g.in_draft,
+        "dispo": "".join(g.draft.available) if g.in_draft else "",
+        "unites": ["".join(p.units) for p in g.players],
         "controle": [(l, -1 if g.control[l] is None else g.control[l]) for l in g.spec.locations],
         "plateau": [(pos, u.owner, u.utype, u.coins) for pos, u in g.board.items()],
         "joueurs": [("".join(p.bag), "".join(p.hand), "".join(p.disc_up), "".join(p.disc_down),
-                     [(u, p.reserve[u]) for u in p.units], sorted(p.lost.items()))
+                     [(u, p.reserve.get(u, 0)) for u in p.units], sorted(p.lost.items()))
                     for p in g.players],
         "attentes": [(PENDING_ID[pd.kind], pd.player, pd.pos, code(pd.coin), pd.drawn, list(pd.positions))
                      for pd in g.pending],
@@ -58,23 +60,30 @@ def comparer_encodage(g: Game, j) -> None:
 
 
 def rejouer(seed: int, unites=None, premier=None, max_manches: int = 150, encoder_tous: int = 7,
-            strategie: str = "aleatoire") -> Game:
-    g = Game("2J", unites, seed=seed, first=premier, max_rounds=max_manches)
-    j = champ_rs.Jeu(seed, None if unites is None else ["".join(u) for u in unites], premier, max_manches)
+            strategie: str = "aleatoire", pool=None, choisit=None) -> Game:
+    if unites == "draft":
+        g = Game("2J", "draft", seed=seed, max_rounds=max_manches, pool=pool, draft_first=choisit)
+        j = champ_rs.Jeu(seed, None, None, max_manches, draft=True,
+                         cartes=None if pool is None else "".join(pool), choisit=choisit)
+    else:
+        g = Game("2J", unites, seed=seed, first=premier, max_rounds=max_manches)
+        j = champ_rs.Jeu(seed, None if unites is None else ["".join(u) for u in unites], premier, max_manches)
     rng = random.Random(seed)
     k = 0
     while True:
         assert etat_rust(j) == etat_python(g), f"graine {seed}, décision {k}"
         legal = g.legal_actions()
         assert [rs.action_python(a) for a in j.legales()] == legal, f"graine {seed}, décision {k}"
-        if k % encoder_tous == 0 and not g.done:
+        if (k % encoder_tous == 0 or g.in_draft) and not g.done:
             comparer_encodage(g, j)
         if g.done:
             assert j.fini and j.resultat == g.result_label()
             return g
         if strategie == "agressive":   # privilégie attaques et tactiques : plus d'effets en chaîne
             fortes = [a for a in legal if a.kind in ("attack", "tactic", "control")]
-            a = rng.choice(fortes) if fortes and rng.random() < 0.8 else rng.choice(legal)
+            # et recrute peu, pour garder des réserves (défense de la Garde royale)
+            autres = [a for a in legal if a.kind != "recruit"] or legal
+            a = rng.choice(fortes) if fortes and rng.random() < 0.8 else rng.choice(autres)
         else:
             a = rng.choice(legal)
         g.apply(a)
@@ -105,7 +114,7 @@ def test_mises_en_place_imposees():
 
 def test_toutes_les_unites_rencontrees():
     vues = set()
-    for seed in range(200, 260):
+    for seed in range(200, 360):
         g = rejouer(seed, strategie="agressive", encoder_tous=25)
         vues |= {a.unit for _, _, a in g.log if a.unit}
         vues |= {a.kind for _, _, a in g.log}
@@ -170,3 +179,39 @@ def test_direct_moteur_rust(tmp_path):
     for kind, coin, unit, cells, extra in d["actions"]:
         g.apply(Action(kind, coin, unit, tuple(cells), extra))
     assert g.done == d["fini"]
+
+
+# ------------------------------------------------------------ mise en place avancée
+def test_types_d_action_identiques():
+    from champ_dhonneur.ia.encodage import KINDS
+    assert rs.KINDS == KINDS
+
+
+def test_draft_generateur_compatible_python():
+    for seed in (0, 1, 2**31 - 1, 123456789):
+        g = Game("2J", "draft", seed=seed)
+        assert etat_rust(champ_rs.Jeu(seed, draft=True)) == etat_python(g)
+
+
+@pytest.mark.parametrize("strategie", ["aleatoire", "agressive"])
+def test_draft_parties_identiques(strategie):
+    for seed in range(40):
+        g = rejouer(seed * 104729 + 11, "draft", strategie=strategie)
+        assert sum(1 for rnd, _, _ in g.log if rnd == 0) == 8
+
+
+def test_draft_impose():
+    rejouer(3, "draft", pool=list("ACGHKLNX"), choisit=1)
+    rejouer(4, "draft", pool=list("BDEFMPRS"), choisit=0, max_manches=30)
+
+
+def test_draft_encodage_invariant():
+    """Après le draft, l'observation est celle de la même partie à armées imposées."""
+    for seed in range(10):
+        j = champ_rs.Jeu(seed, draft=True)
+        rng = random.Random(seed)
+        while j.etat()["en_draft"]:
+            j.jouer(*rng.choice(j.legales()))
+        e = j.etat()
+        k = champ_rs.Jeu(seed, e["unites"], e["premier"])
+        assert j.encoder() == k.encoder()

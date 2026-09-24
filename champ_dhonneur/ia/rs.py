@@ -68,13 +68,14 @@ def _donnees(r: dict) -> dict[str, np.ndarray]:
             "glob_i": g("glob_i", np.int8, 2), "glob_f": g("glob_f", np.float32, GLOB_F).astype(np.float16),
             "acts": g("acts", np.int8, 64, 7).copy(), "pi": g("pi", np.float32, 64).astype(np.float16),
             "n_act": g("n_act", np.int16).copy(), "z": g("z", np.float32).copy(),
-            "q": g("q", np.float32).copy()}
+            "q": g("q", np.float32).copy(), "lieux": g("lieux", np.int8, 37).copy(),
+            "marge": g("marge", np.int8).copy(), "main_adv": g("main_adv", np.int8, 18).copy()}
 
 
-def releve(graine: int, actions: list, resultat: str, max_manches: int, entetes: dict) -> str:
+def releve(graine: int, actions: list, resultat: str, max_manches: int, entetes: dict,
+           draft: bool = False) -> str:
     """Rejoue une partie du moteur Rust dans le moteur Python et exporte son relevé."""
-    g = Game("2J", seed=graine)
-    g.max_rounds = max_manches
+    g = Game("2J", "draft" if draft else None, seed=graine, max_rounds=max_manches)
     for t in actions:
         g.apply(action_python(t))
     if g.result_label() != resultat:
@@ -96,7 +97,7 @@ class DiffuseurRs:
         s = aj.suivie()
         if s is None:
             return
-        graine, premier, armees, actions, fini, finies = s
+        graine, premier, armees, actions, fini, finies, draft = s
         if graine == self.graine and len(actions) == self.n and not fini:
             return
         self.graine, self.n, self.t = graine, len(actions), time.time()
@@ -104,6 +105,7 @@ class DiffuseurRs:
         try:
             _ecrire(self.chemin, {
                 "id": f"{graine}", "mode": "2J", "unites": [list(a) for a in armees],
+                "setup": Game("2J", "draft", seed=graine, max_rounds=max_manches).setup if draft else None,
                 "graine": graine, "initiative": premier, "max_manches": max_manches,
                 "actions": [[a.kind, a.coin, a.unit, list(a.cells), a.extra]
                             for a in map(action_python, actions)],
@@ -121,7 +123,7 @@ def jouer_parties_rs(evaluateur, P, seed: int | None = None) -> tuple[dict, dict
     t0 = time.time()
     params = {k: getattr(P, k) for k in ("parties", "simultanees", "simulations", "simulations_rapides",
                                          "p_complete", "max_manches", "m", "parallele", "c_visit",
-                                         "c_scale", "releves")}
+                                         "c_scale", "releves", "p_draft", "simulations_draft")}
     aj = champ_rs.AutoJeu(params, int(seed if seed is not None else time.time_ns()) % 2**63)
     diffuseur = DiffuseurRs(P.direct, P.parties) if getattr(P, "direct", "") else None
     lot = aj.etape()
@@ -138,6 +140,6 @@ def jouer_parties_rs(evaluateur, P, seed: int | None = None) -> tuple[dict, dict
     r = aj.resultats()
     stats = dict(r["stats"])
     stats["secondes"] = time.time() - t0
-    stats["releves"] = [releve(gr, acts, res, P.max_manches, {"Type": "autojeu"})
-                        for gr, acts, res in r["releves"]]
+    stats["releves"] = [releve(gr, acts, res, P.max_manches, {"Type": "autojeu"}, draft)
+                        for gr, acts, res, draft in r["releves"]]
     return _donnees(r), stats

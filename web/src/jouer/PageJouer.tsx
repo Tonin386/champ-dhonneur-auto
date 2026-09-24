@@ -378,7 +378,13 @@ function Scene() {
     return (
       <div className="colonne-joueur">
         <Joueur decor={decor} image={img} joueur={j} nom="" role={joueurs[j]?.nom}
-          onPiece={actif ? c => useJeu.getState().choisirPiece(c) : undefined} choisie={actif ? piece : null}
+          onPiece={actif ? c => {
+            const st = useJeu.getState();
+            // mise en place avancée : un clic sur une carte la choisit
+            const carte = img.tir ? st.legal.find(l => l.kind === "draft" && l.n === c) : undefined;
+            if (carte) st.jouer(carte.i);
+            else st.choisirPiece(c);
+          } : undefined} choisie={actif ? piece : null}
           attente={vivant && img.t === j && pieceAttente ? pieceAttente : null} />
       </div>
     );

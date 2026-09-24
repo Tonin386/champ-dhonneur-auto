@@ -81,13 +81,28 @@ export function Joueur({ decor, image, joueur, nom, role, onPiece, choisie, atte
         </div>
       </div>
       <div className="cartes" aria-label="Unités">
-        {decor.unites[joueur].map(u => (
+        {(image.arm ?? decor.unites)[joueur].map(u => (
           <figure key={u} className="carte" title={`${decor.cartes[u]?.nom} — ${decor.cartes[u]?.tactique || decor.cartes[u]?.capacite}`}>
             <img src={`/img/cartes/${u}.jpg`} alt="" loading="lazy" />
             <figcaption><b>{u}</b> {decor.cartes[u]?.nom}</figcaption>
           </figure>
         ))}
       </div>
+      {image.tir && trait && (
+        <div className="bloc draft" aria-label="Cartes à choisir">
+          <div className="etiquette">Mise en place avancée : cartes à choisir</div>
+          <div className="cartes">
+            {image.tir.dispo.map(u => (
+              <figure key={u} className={`carte${onPiece ? " jouable" : ""}`}
+                title={`${decor.cartes[u]?.nom} — ${decor.cartes[u]?.tactique || decor.cartes[u]?.capacite}`}
+                onClick={onPiece ? () => onPiece(u) : undefined}>
+                <img src={`/img/cartes/${u}.jpg`} alt="" loading="lazy" />
+                <figcaption><b>{u}</b> {decor.cartes[u]?.nom}</figcaption>
+              </figure>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="bloc marqueurs" title="Marqueurs Contrôle restant à poser (0 = victoire)">
         <div className="etiquette">À poser</div>
         <div className="pieces">

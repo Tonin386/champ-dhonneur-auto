@@ -20,6 +20,8 @@ export interface Decor {
   cartes: Record<string, Carte>;
   graine: number;
   entetes: Record<string, string>;
+  /** mise en place avancée : les 8 cartes tirées, joueur qui choisit la première */
+  draft?: { cartes: string[]; premier: number };
 }
 
 /** [identifiant, case, joueur, type, pièces] */
@@ -55,6 +57,8 @@ export interface Image {
   a: ActionImg | null; // décision qui mène à cette image
   p?: string; // décision en attente
   f?: { g: number | null; r: string }; // fin de partie
+  arm?: string[][]; // armées courantes (parties avec draft)
+  tir?: { dispo: string[]; etape: number }; // draft en cours : cartes encore disponibles
 }
 
 export interface Film {

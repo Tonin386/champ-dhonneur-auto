@@ -22,6 +22,10 @@ def bot_analyse(simulations: int = 400, modele: str | None = None, dispositif: s
 
     bot = NeuralBot(modele=modele, simulations=simulations, dispositif=dispositif, seed=0)
     bot.recherche = RechercheAnalyse(bot.recherche.p, seed=0)
+    from ..bots.neural import modele_par_defaut
+    from ..score import K
+    from .valeurs import lire_k
+    bot.k = lire_k(modele or modele_par_defaut(), K)      # échelle recalibrée par l'entraînement
     return bot
 
 
@@ -34,6 +38,7 @@ def analyser(game: Game, bot, top: int = 5, observateur: int | None = None,
     recherche de victoire forcée à l'information de ce joueur (None : omnisciente).
     """
     from ..score import Solveur, appreciation, bastions, depuis_valeur, texte_mat, texte_score
+    k = getattr(bot, "k", None)
     if game.done:
         return {"coups": [], "valeur": None, "fini": game.result_label(), "bastions": bastions(game)}
     legal = game.legal_actions()
@@ -54,8 +59,8 @@ def analyser(game: Game, bot, top: int = 5, observateur: int | None = None,
         v_or = sign * float(res.q[i])
         c = {"coup": action_str(game, a), "description": describe(game, a),
              "probabilite": round(float(res.politique[i]), 3), "q": round(float(res.q[i]), 3),
-             "visites": int(res.visites[i]), "score": round(depuis_valeur(v_or), 1),
-             "texte": texte_score(depuis_valeur(v_or)), "action": a,
+             "visites": int(res.visites[i]), "score": round(depuis_valeur(v_or, k), 1),
+             "texte": texte_score(depuis_valeur(v_or, k)), "action": a,
              "ligne": _ligne(game, a, racine, observateur, profondeur)}
         coups.append(c)
     if mat and mat["action"] is not None:
@@ -69,11 +74,11 @@ def analyser(game: Game, bot, top: int = 5, observateur: int | None = None,
         c0["score"] = 99.9 if mat["equipe"] == 0 else -99.9
         c0["texte"] = texte_mat(mat["equipe"], mat["coups"])
     v_or = sign * float(res.valeur)
-    score = depuis_valeur(v_or)
+    score = depuis_valeur(v_or, k)
     out = {"coups": coups, "valeur": round(float(res.valeur), 3), "v_reseau": round(float(res.v_reseau), 3),
            "simulations": res.simulations, "force": len(legal) == 1, "v_or": round(v_or, 3),
            "score": round(score, 1), "texte": texte_score(score), "appreciation": appreciation(score),
-           "bastions": bastions(game), "mat": None}
+           "bastions": bastions(game), "mat": None, "k": k}
     if mat:
         out["mat"] = {"equipe": mat["equipe"], "coups": mat["coups"],
                       "coup": action_str(game, mat["action"]) if mat["action"] is not None else None}

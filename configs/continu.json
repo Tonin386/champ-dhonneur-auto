@@ -1,11 +1,11 @@
 {
- "_commentaire": "Entraînement sans fin, par itérations (auto-jeu → apprentissage → évaluation Elo à chaque itération). docker compose --profile continu up -d, ou make continu. Auto-jeu par le moteur Rust (champ_rs) : le GPU devient le goulot dès 2 à 3 processus (RTX A5000 Laptop ≈ 35 000 parties/h, champ banc) ; 4 processus d'auto-jeu ; les évaluations (moteur Python, limitées par le CPU) sont réparties sur 10 processus. Reprise automatique après arrêt ; les relevés de parties vont dans runs/continu/parties pour le spectateur web.",
+ "_commentaire": "Génération 2 (draft) : entraînement sans fin, par itérations (auto-jeu → apprentissage → valeur des unités → évaluation Elo). docker compose --profile continu up -d, ou make continu. 75 % des parties d'auto-jeu commencent par la mise en place avancée (draft, recherche complète de 128 simulations à chaque choix), 25 % par des armées aléatoires. Têtes auxiliaires (Lieux, marge, main adverse), poids publiés moyennés (EMA), évaluations en protocole draft, valeur dynamique des unités dans runs/continu/unites.jsonl. Sans amorçage heuristique : tout l'auto-jeu tourne sur GPU dès la 1re itération (réseau initial aléatoire). Reprise automatique après arrêt.",
  "dossier": "runs/continu",
  "iterations": 0,
  "travailleurs": 4,
  "moteur_autojeu": "auto",
  "parties_par_iteration": 2048,
- "amorce_iterations": 2,
+ "amorce_iterations": 0,
  "amorce_simulations": 48,
  "amorce_pas": 3000,
  "amorce_melange_q": 0.8,
@@ -16,13 +16,20 @@
   "max_manches": 100,
   "simultanees": 168,
   "m": 16,
-  "parallele": 1
+  "parallele": 1,
+  "p_draft": 0.75,
+  "simulations_draft": 128
  },
- "modele": {"d": 160, "couches": 6, "tetes": 5, "ffn": 4},
+ "modele": {
+  "d": 160,
+  "couches": 6,
+  "tetes": 5,
+  "ffn": 4
+ },
  "lot": 1024,
  "lr": 0.001,
  "lr_min": 0.0001,
- "lr_horizon": 400,
+ "lr_horizon": 200,
  "echauffement": 500,
  "poids_decroissance": 0.0001,
  "fenetre": 1500000,
@@ -37,9 +44,27 @@
  "travailleurs_evaluation": 10,
  "eval_paires": 24,
  "eval_simulations": 128,
- "eval_ancres": ["glouton", "heur:64"],
+ "eval_ancres": [
+  "glouton"
+ ],
  "modeles_gardes": 40,
  "releves_autojeu": 6,
  "releves_evaluation": 2,
- "releves_gardes": 400
+ "releves_gardes": 400,
+ "poids_draft": 0.5,
+ "melange_q_draft": 0.5,
+ "poids_aux": {
+  "lieux": 0.15,
+  "marge": 0.1,
+  "main_adverse": 0.1
+ },
+ "ema": 0.998,
+ "eval_protocole": "draft",
+ "unites": {
+  "actif": true,
+  "pools": 256,
+  "pioches": 2,
+  "bootstrap": 30,
+  "ridge": 1.0
+ }
 }

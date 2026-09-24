@@ -118,6 +118,26 @@ continue seul. L'ordre est donc toujours implicite, comme aux échecs.
 La graine fixe les tirages du sac : avec le relevé complet, `champ relire partie.nch` reconstitue la
 partie coup par coup.
 
+### Mise en place avancée (draft)
+
+Les 8 cartes tirées et le joueur qui choisit la première sont donnés en en-tête ; les choix forment
+la manche `0.`, une lettre par carte, dans l'ordre A1 B2 A2 B2 A1 (A = `PremierChoix`). Le second à
+choisir prend l'Initiative (`Initiative`) et commence la manche 1. `Unites0/1` donnent les armées
+finales.
+
+```
+[Graine "9"]
+[Initiative "1"]
+[Unites0 "D G M P"]
+[Unites1 "B H K X"]
+[Draft "B D G H K M P X"]
+[PremierChoix "0"]
+
+0. G X B P D H K M
+1. B@c6 D@b1 X@f5 G@e1 $K{*} $D{P}
+…
+```
+
 ## Évaluation d'une position
 
 L'analyse (page `/jouer`, `champ analyser`) donne un score à la manière des moteurs d'échecs,

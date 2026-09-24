@@ -58,9 +58,27 @@ struct Jeu {
 
 #[pymethods]
 impl Jeu {
+    /// `draft=True` : mise en place avancée (`cartes` : les 8 lettres, `choisit` : premier à
+    /// choisir), équivalent de `Game("2J", "draft", seed, pool=cartes, draft_first=choisit)`.
     #[new]
-    #[pyo3(signature = (graine, unites_=None, premier=None, max_manches=150))]
-    fn new(graine: u64, unites_: Option<Vec<String>>, premier: Option<u8>, max_manches: u16) -> PyResult<Self> {
+    #[pyo3(signature = (graine, unites_=None, premier=None, max_manches=150, draft=false, cartes=None, choisit=None))]
+    fn new(graine: u64, unites_: Option<Vec<String>>, premier: Option<u8>, max_manches: u16, draft: bool,
+           cartes: Option<String>, choisit: Option<u8>) -> PyResult<Self> {
+        if draft {
+            let c = match cartes {
+                None => None,
+                Some(s) => {
+                    let codes: Vec<u8> = s.bytes().filter_map(code_lettre).collect();
+                    if codes.len() != moteur::N_CARTES {
+                        return Err(PyValueError::new_err(format!("cartes invalides : {s}")));
+                    }
+                    let mut c = [0u8; moteur::N_CARTES];
+                    c.copy_from_slice(&codes);
+                    Some(c)
+                }
+            };
+            return Ok(Jeu { p: Partie::nouvelle_draft(graine, c, choisit, max_manches) });
+        }
         Ok(Jeu { p: Partie::nouvelle(graine, unites(unites_)?, premier, max_manches) })
     }
 
@@ -96,6 +114,10 @@ impl Jeu {
         d.set_item("initiative", e.initiative)?;
         d.set_item("init_bougee", e.init_bougee)?;
         d.set_item("premier_manche", e.premier_manche)?;
+        d.set_item("en_draft", e.en_draft)?;
+        let dispo: String = (1..=16u8).filter(|&u| e.dispo & (1 << (u - 1)) != 0).map(lettre).collect();
+        d.set_item("dispo", dispo)?;
+        d.set_item("unites", e.joueurs.iter().map(|j| j.unites().iter().map(|&u| lettre(u)).collect::<String>()).collect::<Vec<_>>())?;
         let pl = plateau::plateau();
         let controle: Vec<(u8, i8)> = pl.lieux.iter().map(|&l| (l, e.controle[l as usize])).collect();
         d.set_item("controle", controle)?;
@@ -112,7 +134,7 @@ impl Jeu {
         let zones = |z: &[u8]| z.iter().map(|&c| lettre(c)).collect::<String>();
         let mut joueurs = Vec::new();
         for j in &e.joueurs {
-            let res: Vec<(char, i8)> = j.unites.iter().map(|&u| (lettre(u), j.reserve[u as usize])).collect();
+            let res: Vec<(char, i8)> = j.unites().iter().map(|&u| (lettre(u), j.reserve[u as usize])).collect();
             let perdues: Vec<(char, i8)> =
                 (1..N_TYPES as u8 - 1).filter(|&u| j.possede(u)).map(|u| (lettre(u), j.perdues[u as usize])).collect();
             joueurs.push((
@@ -188,6 +210,8 @@ impl AutoJeu {
             c_visit: lire(params, "c_visit", 50.0f64)?,
             c_scale: lire(params, "c_scale", 0.1f64)?,
             releves: lire(params, "releves", 0usize)?,
+            p_draft: lire(params, "p_draft", 0.0f64)?,
+            simulations_draft: lire(params, "simulations_draft", 128usize)?,
         };
         Ok(AutoJeu { a: AutoJeuRs::new(p, graine) })
     }
@@ -223,11 +247,15 @@ impl AutoJeu {
 
     /// Partie suivie pour le direct : (graine, premier joueur, armées, décisions, finie, parties
     /// terminées), ou None s'il n'y a plus de partie en cours.
-    fn suivie(&mut self) -> Option<(u64, u8, Vec<String>, Vec<ActionPy>, bool, u64)> {
+    fn suivie(&mut self) -> Option<(u64, u8, Vec<String>, Vec<ActionPy>, bool, u64, bool)> {
         let fin = self.a.stats.parties;
         self.a.suivie().map(|s| {
-            let armees = s.unites.iter().map(|u| u.iter().map(|&c| lettre(c)).collect::<String>()).collect();
-            (s.graine, s.premier, armees, s.actions.iter().map(vers_py).collect(), s.fini, fin)
+            let armees = s
+                .unites
+                .iter()
+                .map(|u| u.iter().filter(|&&c| c != 0).map(|&c| lettre(c)).collect::<String>())
+                .collect();
+            (s.graine, s.premier, armees, s.actions.iter().map(vers_py).collect(), s.fini, fin, s.draft)
         })
     }
 
@@ -247,6 +275,9 @@ impl AutoJeu {
         d.set_item("n_act", PyBytes::new(py, octets(&dn.n_act)))?;
         d.set_item("z", PyBytes::new(py, octets(&dn.z)))?;
         d.set_item("q", PyBytes::new(py, octets(&dn.q)))?;
+        d.set_item("lieux", PyBytes::new(py, octets(&dn.lieux)))?;
+        d.set_item("marge", PyBytes::new(py, octets(&dn.marge)))?;
+        d.set_item("main_adv", PyBytes::new(py, octets(&dn.main_adv)))?;
         let s = self.a.stats;
         let st = PyDict::new(py);
         st.set_item("parties", s.parties)?;
@@ -257,10 +288,13 @@ impl AutoJeu {
         st.set_item("decisions", s.decisions)?;
         st.set_item("recherches", s.recherches)?;
         st.set_item("evaluations", s.evaluations)?;
+        st.set_item("parties_draft", s.parties_draft)?;
+        st.set_item("victoires_choisit", s.victoires_choisit)?;
+        st.set_item("victoires_premier", s.victoires_premier)?;
         d.set_item("stats", st)?;
-        let releves: Vec<(u64, Vec<ActionPy>, &str)> = std::mem::take(&mut self.a.releves)
+        let releves: Vec<(u64, Vec<ActionPy>, &str, bool)> = std::mem::take(&mut self.a.releves)
             .into_iter()
-            .map(|r| (r.graine, r.actions.iter().map(vers_py).collect(), r.resultat))
+            .map(|r| (r.graine, r.actions.iter().map(vers_py).collect(), r.resultat, r.draft))
             .collect();
         d.set_item("releves", releves)?;
         Ok(d)

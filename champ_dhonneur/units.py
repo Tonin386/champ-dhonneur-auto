@@ -35,7 +35,9 @@ UNITS: dict[str, UnitDef] = {u.letter: u for u in [
             "(!) Peut être déployé sur une case libre adjacente à une unité alliée."),
     UnitDef("F", "Fantassin", 5, "Chacun des deux Fantassins effectue une manœuvre.",
             "(!) Deux unités de Fantassins peuvent être déployées.", max_units=2),
-    UnitDef("G", "Garde royale", 5, "Défausse le Sceau royal pour déplacer la Garde royale.",
+    UnitDef("G", "Garde royale", 5,
+            "Défausse le Sceau royal pour déplacer la Garde royale de 1 ou 2 cases vers un Lieu que "
+            "vous contrôlez.",
             "(!) Quand elle est attaquée, peut retirer une pièce de la réserve au lieu de la pile."),
     UnitDef("H", "Cavalerie légère", 5, "Se déplace de 2 cases."),
     UnitDef("K", "Capitaine", 5,
@@ -57,6 +59,12 @@ UNITS: dict[str, UnitDef] = {u.letter: u for u in [
 ]}
 
 ALL_LETTERS = sorted(UNITS)
+
+# Mise en place avancée (livret p.12) : nombre de cartes tirées, et ordre des choix en décalage
+# par rapport au premier à choisir (A1 B2 A2 B2 A1). 4 joueurs (p.13), non branché :
+# 12 cartes, ordre (0, 1, 2, 3, 3, 2, 1, 0, 1, 2, 3, 0) par siège.
+DRAFT_POOL = {"2J": 8}
+DRAFT_ORDER = {"2J": (0, 1, 1, 0, 0, 1, 1, 0)}
 
 # Répartition conseillée pour la première partie (livret p.5)
 FIRST_GAME = [["S", "P", "X", "H"], ["A", "C", "L", "E"]]

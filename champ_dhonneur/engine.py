@@ -9,6 +9,10 @@ Les effets en chaîne (Berserk, Soldat, Moine soldat, Mercenaire, tactique du
 Fantassin, défense de la Garde royale) sont gérés par une pile de décisions
 en attente (`pending`). Chaque décision est donc atomique et petite, ce qui
 simplifie l'interface humaine, la notation et l'apprentissage par renforcement.
+
+Mise en place avancée (livret p.12, `units="draft"`) : 8 cartes Unité tirées au
+hasard, choisies une par une dans l'ordre A1 B2 A2 B2 A1 (manche 0, actions
+`DRAFT`) ; B prend ensuite l'Initiative et commence la partie.
 """
 from __future__ import annotations
 
@@ -17,13 +21,14 @@ from collections import deque
 from typing import NamedTuple
 
 from .board import BoardSpec, get_board
-from .units import FIRST_GAME, ROYAL, UNITS
+from .units import DRAFT_ORDER, DRAFT_POOL, FIRST_GAME, ROYAL, UNITS
 
 # Types d'actions
 DEPLOY, BOLSTER = "deploy", "bolster"
 MOVE, CONTROL, ATTACK, TACTIC = "move", "control", "attack", "tactic"
 INITIATIVE, RECRUIT, PASS = "initiative", "recruit", "pass"
 SKIP, RG_RESERVE, RG_UNIT = "skip", "rg_reserve", "rg_unit"
+DRAFT = "draft"                 # choix d'une carte Unité (mise en place avancée)
 
 MANEUVERS = (MOVE, CONTROL, ATTACK, TACTIC)
 FACE_DOWN = (INITIATIVE, RECRUIT, PASS)
@@ -97,9 +102,26 @@ class IllegalAction(Exception):
     pass
 
 
+class Draft:
+    """Mise en place avancée : cartes tirées, cartes restantes, choix déjà faits."""
+    __slots__ = ("pool", "first", "available", "picks", "step")
+
+    def __init__(self, pool: tuple[str, ...], first: int):
+        self.pool, self.first = pool, first          # first : joueur qui choisit la 1re carte (A)
+        self.available = pool
+        self.picks: list[tuple[int, str]] = []       # (joueur, unité) dans l'ordre
+        self.step = 0
+
+    def copy(self) -> "Draft":
+        d = Draft(self.pool, self.first)
+        d.available, d.picks, d.step = self.available, self.picks[:], self.step
+        return d
+
+
 class Game:
     def __init__(self, mode: str = "2J", units: list[list[str]] | str | None = None,
-                 seed: int | None = None, first: int | None = None, max_rounds: int = 150):
+                 seed: int | None = None, first: int | None = None, max_rounds: int = 150,
+                 pool: list[str] | None = None, draft_first: int | None = None):
         self.mode = mode
         self.spec: BoardSpec = get_board(mode)
         self.n_players = 2 if mode == "2J" else 4
@@ -108,7 +130,21 @@ class Game:
         self.rng = random.Random(self.seed * 7919 + 17)   # pioches uniquement
         self.max_rounds = max_rounds
         per_player = 4 if self.n_players == 2 else 3
-        if units == "premiere":
+        self.draft: Draft | None = None
+        if units == "draft":
+            if mode != "2J":
+                raise ValueError("mise en place avancée : 2 joueurs seulement")
+            deck = sorted(UNITS)
+            setup_rng.shuffle(deck)             # toujours consommé : même état du générateur
+            cartes = sorted(pool) if pool is not None else sorted(deck[:DRAFT_POOL[mode]])
+            if len(set(cartes)) != DRAFT_POOL[mode] or not set(cartes) <= set(UNITS):
+                raise ValueError(f"cartes du draft invalides : {cartes}")
+            if draft_first is None:
+                draft_first = setup_rng.randrange(self.n_players)
+            first = 1 - draft_first             # le second à choisir prend l'Initiative
+            self.draft = Draft(tuple(cartes), draft_first)
+            units = [[], []]
+        elif units == "premiere":
             units = [list(u) for u in FIRST_GAME]
             if first is None:
                 first = 0
@@ -118,11 +154,9 @@ class Game:
             units = [sorted(deck[i * per_player:(i + 1) * per_player]) for i in range(self.n_players)]
         assert len(units) == self.n_players
         self.players = [Player(i, i % 2, units[i]) for i in range(self.n_players)]
-        for pl in self.players:
-            for u in pl.units:
-                pl.bag += [u, u]
-                pl.reserve[u] = UNITS[u].count - 2
-            pl.bag.append(ROYAL)
+        if self.draft is None:
+            for pl in self.players:
+                self._fill_bag(pl)
         self.board: dict[int, Unit] = {}
         self.loc_set = frozenset(self.spec.locations)
         self.control: dict[int, int | None] = {loc: None for loc in self.spec.locations}
@@ -133,6 +167,11 @@ class Game:
         self.markers_left = [total_markers - len(self.spec.starts[t]) for t in range(2)]
         if first is None:
             first = setup_rng.randrange(self.n_players)
+        self.setup = {"mode": mode, "units": "draft" if self.draft else [p.units[:] for p in self.players],
+                      "seed": self.seed, "first": None if self.draft else first,
+                      "max_rounds": max_rounds}
+        if self.draft:
+            self.setup.update(pool=list(self.draft.pool), draft_first=self.draft.first)
         self.first_player = first
         self.initiative = first
         self.initiative_moved = False
@@ -144,7 +183,37 @@ class Game:
         self.done = False
         self.forced: dict[int, deque] = {}  # pioches imposées (rejouer une partie physique)
         self.log: list[tuple[int, int, Action]] = []   # (manche, joueur, action)
-        self._start_round()
+        if self.draft is None:
+            self._start_round()
+        else:
+            self.current = self.draft.first
+
+    @staticmethod
+    def _fill_bag(pl: "Player") -> None:
+        pl.bag, pl.reserve, pl.lost = [], {}, {u: 0 for u in pl.units}
+        for u in pl.units:
+            pl.bag += [u, u]
+            pl.reserve[u] = UNITS[u].count - 2
+        pl.bag.append(ROYAL)
+
+    def neuve(self) -> "Game":
+        """La même partie à son début (même mise en place, mêmes graines) : pour rejouer le relevé."""
+        return Game(**self.setup)
+
+    @property
+    def in_draft(self) -> bool:
+        return self.draft is not None and self.draft.step < len(self.draft.pool)
+
+    @property
+    def turn_start(self) -> bool:
+        """Début d'un tour de joueur : ni suite en attente, ni second choix d'un même tour de draft."""
+        if self.pending:
+            return False
+        d = self.draft
+        if d is None or d.step == 0 or d.step >= len(d.pool):
+            return True
+        order = DRAFT_ORDER[self.mode]
+        return order[d.step] != order[d.step - 1]
 
     # ------------------------------------------------------------------ copie
     def copy(self, rng: random.Random | None = None, log: bool = True) -> "Game":
@@ -170,6 +239,8 @@ class Game:
         g.winner, g.done = self.winner, self.done
         g.forced = {k: deque(v) for k, v in self.forced.items()}
         g.log = self.log[:] if log else []
+        g.setup = self.setup
+        g.draft = self.draft.copy() if self.draft is not None else None
         return g
 
     # ------------------------------------------------------------ accesseurs
@@ -236,6 +307,8 @@ class Game:
     def legal_actions(self) -> list[Action]:
         if self.done:
             return []
+        if self.in_draft:
+            return [Action(DRAFT, unit=u) for u in self.draft.available]
         if self.pending:
             return self._pending_actions(self.pending[-1])
         p = self.current
@@ -245,7 +318,7 @@ class Game:
         return out
 
     def can_take_initiative(self, p: int) -> bool:
-        return (not self.initiative_moved and self.round_first != p
+        return (not self.in_draft and not self.initiative_moved and self.round_first != p
                 and self.team(self.initiative) != self.team(p))
 
     def _coin_actions(self, p: int, coin: str) -> list[Action]:
@@ -258,9 +331,7 @@ class Game:
             acts.append(Action(INITIATIVE, coin))
         if coin == ROYAL:
             for pos in self.units_of(p, "G"):
-                for nb in self.spec.neighbors[pos]:
-                    if nb not in self.board:
-                        acts.append(Action(TACTIC, ROYAL, "G", (pos, nb)))
+                acts += [Action(TACTIC, ROYAL, "G", (pos, d)) for d in self._royal_guard_dests(p, pos)]
             return acts
         u = coin
         positions = self.units_of(p, u)
@@ -284,6 +355,18 @@ class Game:
                 if self.team(unit.owner) == team:
                     cells.update(nb for nb in self.spec.neighbors[pos] if nb not in self.board)
         return cells
+
+    def _royal_guard_dests(self, p: int, pos: int) -> list[int]:
+        """Tactique de la Garde royale : 1 ou 2 cases (chemin libre, pas forcément en ligne
+        droite) jusqu'à un Lieu libre contrôlé par son équipe."""
+        sp, team = self.spec, self.team(p)
+        dests = set()
+        for mid in sp.neighbors[pos]:
+            if mid in self.board:
+                continue
+            dests.add(mid)
+            dests.update(d for d in sp.neighbors[mid] if d != pos and d not in self.board)
+        return sorted(d for d in dests if d in self.loc_set and self.control[d] == team)
 
     def _can_attack(self, attacker: Unit, target: Unit) -> bool:
         return not (target.utype == "N" and attacker.coins < 2)
@@ -399,6 +482,9 @@ class Game:
             raise IllegalAction("La partie est terminée")
         p = self.to_move
         self.log.append((self.round, p, a))
+        if self.in_draft:
+            self._apply_draft(p, a)
+            return
         if self.pending:
             self._apply_pending(self.pending.pop(), a)
         else:
@@ -439,6 +525,25 @@ class Game:
         if k == "berserk" and unit.coins < 2:
             return False
         return len(self._pending_actions(pd)) > 1
+
+    def _apply_draft(self, p: int, a: Action) -> None:
+        d = self.draft
+        if a.kind != DRAFT or a.unit not in d.available:
+            self.log.pop()
+            raise IllegalAction(f"Choix de carte illégal : {a}")
+        d.available = tuple(u for u in d.available if u != a.unit)
+        d.picks.append((p, a.unit))
+        d.step += 1
+        pl = self.players[p]
+        pl.units = sorted(pl.units + [a.unit])     # nouvelle liste : Player.copy partage units
+        pl.lost = {**pl.lost, a.unit: 0}
+        if d.step < len(d.pool):
+            self.current = (d.first + DRAFT_ORDER[self.mode][d.step]) % self.n_players
+            return
+        for q in self.players:
+            self._fill_bag(q)
+        self.current = self.first_player
+        self._start_round()
 
     def _apply_main(self, p: int, a: Action, from_hand: bool) -> None:
         pl = self.players[p]
@@ -585,6 +690,8 @@ class Game:
 
     # ---------------------------------------------------------- informations
     def pending_label(self) -> str:
+        if self.in_draft:
+            return "Mise en place avancée : choisissez une carte Unité"
         if not self.pending:
             return ""
         return {

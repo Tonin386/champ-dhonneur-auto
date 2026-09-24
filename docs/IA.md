@@ -306,6 +306,37 @@ Tailles : `cpu-demo` 0,2 M paramètres, défaut 3 M, `gpu.json` 6,5 M (d = 256, 
 - Classement Elo par maximum de vraisemblance (modèle de Bradley-Terry, algorithme MM) sur tous
   les résultats. `meilleur.pt` est la version au meilleur Elo.
 
+## Génération 2 : draft, cibles auxiliaires, valeur des unités
+
+- **Draft.** `Game(units="draft")` : 8 cartes tirées, choix A1 B2 A2 B2 A1 (actions `draft`, manche
+  0), puis B commence. Une part `autojeu.p_draft` des parties d'auto-jeu (0,75) commence ainsi ;
+  chaque choix reçoit une recherche complète de `autojeu.simulations_draft` simulations, à travers
+  la suite de la partie. Pendant l'amorçage, `p_draft = 0` (l'heuristique ne sait pas drafter).
+- **Encodage v2.** Les 8 jetons d'unité sont les cartes en jeu (à moi, adverses, disponibles), sans
+  position ; 4 caractéristiques globales de draft, nulles en jeu : une position issue d'un draft
+  s'encode comme la même position à armées imposées (testé). Les modèles v1 sont refusés.
+- **Réseau v2.** Pointeur contextuel (le logit d'une action lit le jeton de l'unité concernée) et
+  têtes auxiliaires : contrôle final de chaque Lieu, marge finale de marqueurs, main adverse
+  (`poids_aux`). Les exemples de draft pèsent `poids_draft` dans la perte de politique et mélangent
+  `melange_q_draft` de valeur de recherche dans leur cible de valeur.
+- **EMA.** `ema` > 0 : `dernier.pt` et `meilleur.pt` publient une moyenne mobile des poids ; les poids
+  bruts (reprise) sont dans `modeles/brut.pt`.
+- **Évaluation.** `eval_protocole: "draft"` : matchs appariés sur les mêmes 8 cartes, camps inversés ;
+  les ancres sans recherche (glouton) choisissent leurs cartes au hasard. `champ evaluer --protocole
+  draft`.
+- **Valeur dynamique des unités** (`unites.actif`, `ia/valeurs.py`), à chaque itération, en points du
+  scoreur (10 = un bastion) :
+  - K est recalibré sur la fenêtre d'exemples (`echelle.json`, utilisé aussi par `/jouer`) ;
+  - 256 tirages fixes de 8 cartes × 70 répartitions, évalués par le réseau publié ;
+  - régression ridge : valeur propre de chaque unité (± IC 95 % par bootstrap), synergies, contres,
+    valeur de commencer ;
+  - draft optimal exact sur ces sondes : fréquence de premier choix optimal, regret si on ne la prend
+    pas en premier, avantage du premier à choisir ;
+  - préférences réelles de l'auto-jeu (π' des cartes disponibles, 1 = neutre).
+
+  Tout est écrit dans `unites.jsonl` (historique) et `unites.json` (dernier état). Ces valeurs ne
+  rétroagissent pas sur l'apprentissage : ce sont des mesures.
+
 ## Débit et ordre de grandeur
 
 Coût mesuré d'une simulation côté Python (déterminisation, descente, encodage) : 0,12 ms sur un
@@ -328,6 +359,8 @@ parties/heure).
   reproduire est petite (`legal_actions`, `apply`, `determinize`, `encode_state`).
 - **Serveur d'inférence central** (un seul processus sur le GPU qui reçoit les requêtes de tous
   les processus d'auto-jeu) pour de plus gros réseaux.
-- **Choix des unités appris** (mise en place avancée) : une tête supplémentaire qui évalue les
-  compositions d'armées.
+- **Solveur exact du draft** : minimax doux sur les 70 répartitions évaluées par le réseau (≈ 290
+  évaluations au lieu de ≈ 560), en remplacement du MCTS aux décisions de draft.
+- **Inférence** : CUDA graphs par paliers de taille de lot, double tampon CPU/GPU, TensorRT.
+- **Déterminisations pondérées** par la tête de croyance sur la main adverse.
 - **4 joueurs** : l'encodage actuel est spécifique au plateau 2J.

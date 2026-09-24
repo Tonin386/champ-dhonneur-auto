@@ -13,6 +13,13 @@ Principes :
     unité, cases). Le réseau calcule un score par action à partir de ces
     entiers et des représentations des cases concernées (réseau « pointeur »).
     Cela généralise naturellement aux 1820 compositions d'armées possibles.
+  * **Mise en place avancée (draft).** Les 8 jetons d'unité sont les 8 cartes en jeu :
+    mes unités (camp 0), celles de l'adversaire (camp 1), puis les cartes encore
+    disponibles (camp 2). Choisir une carte est une action comme les autres. Hors draft,
+    les caractéristiques propres au draft sont nulles : une position issue d'un draft
+    s'encode exactement comme la même position à armées imposées.
+
+Version 2 de l'encodage (`VERSION`) : incompatible avec les modèles de la version 1.
 
 Tout est en numpy pur pour pouvoir encoder dans les processus d'auto-jeu.
 """
@@ -21,14 +28,16 @@ from __future__ import annotations
 import numpy as np
 
 from ..board import get_board
-from ..engine import (ATTACK, BOLSTER, CONTROL, DEPLOY, INITIATIVE, MOVE, PASS, RECRUIT,
+from ..engine import (ATTACK, BOLSTER, CONTROL, DEPLOY, DRAFT, INITIATIVE, MOVE, PASS, RECRUIT,
                       RG_RESERVE, RG_UNIT, SKIP, TACTIC, Action, Game)
 from ..units import ALL_LETTERS, ROYAL, UNITS
+
+VERSION = 2
 
 SPEC = get_board("2J")
 N_CELLS = SPEC.n_cells                 # 37
 NONE_CELL = N_CELLS                    # index « pas de case »
-N_UNIT_TOKENS = 8                      # 4 unités à moi + 4 adverses
+N_UNIT_TOKENS = 8                      # les 8 cartes en jeu : à moi, adverses, disponibles
 N_TOKENS = N_CELLS + N_UNIT_TOKENS + 1  # + jeton global
 
 # types de pièces : 0 = aucune, 1..16 = unités, 17 = Sceau royal
@@ -37,11 +46,11 @@ COIN_ID[ROYAL] = len(ALL_LETTERS) + 1
 N_COIN_TYPES = len(ALL_LETTERS) + 2    # 18
 
 KINDS = [DEPLOY, BOLSTER, MOVE, CONTROL, ATTACK, TACTIC, INITIATIVE, RECRUIT, PASS,
-         SKIP, RG_RESERVE, RG_UNIT]
+         SKIP, RG_RESERVE, RG_UNIT, DRAFT]
 KIND_ID = {k: i for i, k in enumerate(KINDS)}
 N_KINDS = len(KINDS)
 
-PENDING_KINDS = ["", "berserk", "soldat", "merc", "footman", "priest", "rg"]
+PENDING_KINDS = ["", "berserk", "soldat", "merc", "footman", "priest", "rg", "draft"]
 PENDING_ID = {k: i for i, k in enumerate(PENDING_KINDS)}
 
 MAX_COINS_EMB = 8
@@ -53,7 +62,7 @@ LOC_SET = frozenset(SPEC.locations)
 
 CELL_F = 3    # flotteurs par case
 UNIT_F = 12   # flotteurs par jeton d'unité
-GLOB_F = 22   # flotteurs du jeton global
+GLOB_F = 26   # flotteurs du jeton global
 ACT_F = 7     # entiers par action : type, pièce, unité, extra, c0, c1, c2
 
 
@@ -89,6 +98,7 @@ def encode_state(g: Game) -> dict[str, np.ndarray]:
 
     ui = []
     uf = []
+    dr = g.draft if g.in_draft else None
     for side, pl in enumerate((me, opp)):
         bc, nu = board_coins[side], n_units[side]
         hand, bag, dd, du = pl.hand, pl.bag, pl.disc_down, pl.disc_up
@@ -100,6 +110,10 @@ def encode_state(g: Game) -> dict[str, np.ndarray]:
                        (h + b + d) / 3.0, up / 2.0, pl.reserve.get(u, 0) / 3.0,
                        pl.lost.get(u, 0) / 3.0, bc.get(u, 0) / 3.0, float(nu.get(u, 0)),
                        UNITS[u].count / 5.0, (h + b + d + up) / 4.0, 1.0 if (mine and h) else 0.0))
+    if dr is not None:
+        for u in dr.available:
+            ui.append((COIN_ID[u], 2))
+            uf.append((0.0,) * 9 + (UNITS[u].count / 5.0, 0.0, 0.0))
     unit_i = np.array(ui, np.int64)
     unit_f = np.array(uf, np.float32)
 
@@ -109,6 +123,8 @@ def encode_state(g: Game) -> dict[str, np.ndarray]:
         glob_i[0] = PENDING_ID[pending.kind]
         if pending.coin is not None:
             glob_i[1] = COIN_ID[pending.coin]
+    elif dr is not None:
+        glob_i[0] = PENDING_ID["draft"]
     total_markers = 6
     gf = glob_f
     gf[0] = g.markers_left[t] / total_markers
@@ -133,8 +149,23 @@ def encode_state(g: Game) -> dict[str, np.ndarray]:
     gf[19] = g.round / g.max_rounds
     gf[20] = 1.0 if g.current == p else 0.0
     gf[21] = sum(1 for loc in SPEC.locations if g.control[loc] is None) / 10.0
+    if dr is not None:
+        gf[22] = 1.0
+        gf[23] = dr.step / len(dr.pool)
+        gf[24] = draft_picks_left(g) / 2.0
+    gf[25] = 1.0 if g.first_player == p else 0.0
     return {"cell_i": cell_i, "cell_f": cell_f, "unit_i": unit_i, "unit_f": unit_f,
             "glob_i": glob_i, "glob_f": glob_f}
+
+
+def draft_picks_left(g: Game) -> int:
+    """Cartes que le joueur au trait choisit encore dans ce tour de draft (1 ou 2)."""
+    from ..units import DRAFT_ORDER
+    order, s = DRAFT_ORDER[g.mode], g.draft.step
+    n = 1
+    while s + n < len(order) and order[s + n] == order[s]:
+        n += 1
+    return n
 
 
 def encode_action(a: Action, perm: list[int]) -> tuple[int, ...]:

@@ -22,12 +22,14 @@ X Arbalétrier) ; « * » = Sceau royal.
                         Moine soldat, Fantassin (ex. Bc3-c4>Bc4xc5)
     Garde royale        (R)  la défense retire une pièce de la réserve
     Refus d'une option  0    (omis dans les relevés)
+    Choix d'une carte   K    mise en place avancée (manche 0 : « 0. K C X A N F G R »),
+                        avec les en-têtes [Draft "…8 cartes…"] et [PremierChoix "0|1"]
 """
 from __future__ import annotations
 
 import re
 
-from .engine import (ATTACK, BOLSTER, CONTROL, DEPLOY, INITIATIVE, MOVE, PASS, RECRUIT,
+from .engine import (ATTACK, BOLSTER, CONTROL, DEPLOY, DRAFT, INITIATIVE, MOVE, PASS, RECRUIT,
                      RG_RESERVE, RG_UNIT, SKIP, TACTIC, TEAM_NAMES, Action, Game, IllegalAction)
 from .units import ROYAL
 
@@ -37,6 +39,8 @@ def action_str(game: Game, a: Action, hidden: bool = True) -> str:
     c = [n[i] for i in a.cells]
     k = a.kind
     tag = f"{{{a.coin}}}" if hidden and a.coin else ""
+    if k == DRAFT:
+        return a.unit
     if k == PASS:
         return "--" + tag
     if k == INITIATIVE:
@@ -87,6 +91,7 @@ def describe(game: Game, a: Action) -> str:
     un = unit_name(a.unit) if a.unit else ""
     coin = f" (pièce {unit_name(a.coin)})" if a.coin else ""
     return {
+        DRAFT: lambda: f"Choisir la carte {un}",
         PASS: lambda: f"Passer{coin}",
         INITIATIVE: lambda: f"Prendre l'initiative{coin}",
         RECRUIT: lambda: f"Recruter : {unit_name(a.extra or '')}{coin}",
@@ -141,6 +146,9 @@ def export_record(game: Game, hidden: bool = True, headers: dict | None = None) 
     }
     for p in game.players:
         h[f"Unites{p.idx}"] = " ".join(p.units)
+    if game.draft is not None:
+        h["Draft"] = " ".join(game.draft.pool)
+        h["PremierChoix"] = str(game.draft.first)
     if game.max_rounds != 150:
         h["MaxManches"] = str(game.max_rounds)
     h["Resultat"] = game.result_label()
@@ -149,9 +157,8 @@ def export_record(game: Game, hidden: bool = True, headers: dict | None = None) 
     lines = [f'[{k} "{v}"]' for k, v in h.items()]
     lines.append("")
     tokens: list[str] = []
-    cur_round = 0
-    replay = Game(game.mode, [p.units for p in game.players], seed=game.seed,
-                  first=game.first_player, max_rounds=game.max_rounds)
+    cur_round = -1
+    replay = game.neuve()
     body: list[str] = []
     for rnd, _p, a in game.log:
         is_main = not replay.pending
@@ -184,9 +191,13 @@ def import_record(text: str) -> Game:
     h = parse_headers(text)
     mode = h.get("Mode", "2J")
     n = 2 if mode == "2J" else 4
-    units = [h[f"Unites{i}"].split() for i in range(n)]
-    game = Game(mode, units, seed=int(h["Graine"]), first=int(h.get("Initiative", 0)),
-                max_rounds=int(h.get("MaxManches", 150)))
+    if "Draft" in h:
+        game = Game(mode, "draft", seed=int(h["Graine"]), max_rounds=int(h.get("MaxManches", 150)),
+                    pool=h["Draft"].split(), draft_first=int(h.get("PremierChoix", 0)))
+    else:
+        units = [h[f"Unites{i}"].split() for i in range(n)]
+        game = Game(mode, units, seed=int(h["Graine"]), first=int(h.get("Initiative", 0)),
+                    max_rounds=int(h.get("MaxManches", 150)))
     body = re.sub(r"\[[^\]]*\]", " ", text)
     for tok in body.split():
         if re.fullmatch(r"\d+\.", tok) or tok in ("1-0", "0-1", "1/2-1/2", "*"):

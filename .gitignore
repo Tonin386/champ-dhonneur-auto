@@ -18,5 +18,6 @@ champ_dhonneur/server/web/
 
 # Données produites : entraînements, parties, modèles
 runs/
+archives/
 data/
 modeles/*.pt

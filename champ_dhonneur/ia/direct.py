@@ -68,6 +68,7 @@ class Diffuseur:
         try:
             _ecrire(self.chemin, {
                 "id": f"{g.seed}", "mode": g.mode, "unites": [p.units for p in g.players],
+                "setup": g.setup,
                 "graine": g.seed, "initiative": g.first_player, "max_manches": g.max_rounds,
                 "actions": [[a.kind, a.coin, a.unit, list(a.cells), a.extra] for _, _, a in g.log],
                 "fini": fini or g.done, "parties": parties_finies, "total": self.total,
