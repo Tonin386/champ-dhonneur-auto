@@ -266,9 +266,25 @@ code { font-family: var(--mono); }
 /* ---------------------------------------------------------------- graphiques */
 .bas { min-height: 0; }
 .graphes { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 0.6rem; }
-.graphe { margin: 0; padding: 0.5rem 0.7rem 0.3rem; background: var(--panneau); border: 1px solid var(--bord); border-radius: 0.7rem; display: flex; flex-direction: column; min-width: 0; }
+.graphe { position: relative; margin: 0; padding: 0.5rem 0.7rem 0.3rem; background: var(--panneau); border: 1px solid var(--bord); border-radius: 0.7rem; display: flex; flex-direction: column; min-width: 0; }
 .graphe figcaption { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
-.graphe .titre { font-size: 0.8rem; color: var(--texte-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.graphe .titre { font-size: 0.8rem; color: var(--texte-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; cursor: help; border-radius: 0.2rem; }
+.icone-aide {
+  display: inline-flex; align-items: center; justify-content: center; width: 0.95rem; height: 0.95rem; margin-left: 0.3rem;
+  border-radius: 50%; border: 1px solid var(--texte-3); color: var(--texte-3); font: italic 700 0.65rem/1 Georgia, serif; vertical-align: 0.05rem;
+}
+.titre:hover .icone-aide, .titre:focus-visible .icone-aide { border-color: var(--or); color: var(--or); }
+/* infobulles : au-dessus du graphique (les graphiques sont en bas de l'écran) */
+.bulle {
+  position: absolute; z-index: 20; left: 0; bottom: calc(100% + 0.5rem); width: min(24rem, calc(100vw - 2rem));
+  padding: 0.7rem 0.85rem; border-radius: 0.6rem; background: #0a1512; border: 1px solid var(--or-2);
+  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.55); color: var(--texte); font-size: 0.9rem; line-height: 1.4;
+  opacity: 0; visibility: hidden; transform: translateY(0.3rem); transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+  pointer-events: none;
+}
+.bulle.droite { left: auto; right: 0; }
+.bulle small { display: block; margin-top: 0.45rem; color: var(--texte-3); font-size: 0.78rem; }
+.titre:hover + .bulle, .titre:focus-visible + .bulle { opacity: 1; visibility: visible; transform: none; }
 .graphe .valeur { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .graphe .quand { font-size: 0.7rem; color: var(--texte-3); white-space: nowrap; }
 .graphe .zone { height: 6.2rem; position: relative; }

@@ -5,6 +5,8 @@ import type { Tableau } from "../types";
 interface Serie {
   cle: string;
   titre: string;
+  /** infobulle : ce que mesure le graphique et comment le lire */
+  aide: string;
   xs: number[];
   ys: (number | null)[];
   format: (v: number) => string;
@@ -25,7 +27,7 @@ function bornes(vals: number[]): [number, number] {
 }
 
 /** Petit graphique d'une seule série ; le survol est partagé par tous (même itération). */
-function MiniGraphe({ s, survol, setSurvol }: { s: Serie; survol: number | null; setSurvol: (i: number | null) => void }) {
+function MiniGraphe({ s, survol, setSurvol, droite }: { s: Serie; survol: number | null; setSurvol: (i: number | null) => void; droite?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [taille, setTaille] = useState({ w: 300, h: 110 });
   useLayoutEffect(() => {
@@ -61,7 +63,13 @@ function MiniGraphe({ s, survol, setSurvol }: { s: Serie; survol: number | null;
   return (
     <figure className="graphe">
       <figcaption>
-        <span className="titre">{s.titre}</span>
+        <span className="titre" tabIndex={0} aria-describedby={`aide-${s.cle}`}>
+          {s.titre}<span className="icone-aide" aria-hidden="true">i</span>
+        </span>
+        <span className={`bulle${droite ? " droite" : ""}`} role="tooltip" id={`aide-${s.cle}`}>
+          {s.aide}
+          <small>Survol de la courbe : valeur d'une itération, lue en même temps sur tous les graphiques.</small>
+        </span>
         <span className="valeur">{affiche ? s.format(affiche[1]) : "—"}</span>
         {affiche && <span className="quand">it. {affiche[0]}</span>}
       </figcaption>
@@ -105,18 +113,38 @@ export function Graphes({ t }: { t: Tableau }) {
   const it = S.iteration as number[];
   const series: Serie[] = [
     { cle: "elo", titre: "Elo (glouton = 0)", xs: t.courbe.map(p => p.iteration), ys: t.courbe.map(p => p.elo), format: signe,
-      refs: Object.entries(t.ancres).filter(([k]) => k !== "glouton") },
-    { cle: "pph", titre: "Parties d'auto-jeu / h", xs: it, ys: S.parties_par_heure, format: v => compact(v) },
-    { cle: "pp", titre: "Perte de politique", xs: it, ys: S.perte_politique, format: dec(3) },
-    { cle: "pv", titre: "Perte de valeur", xs: it, ys: S.perte_valeur, format: dec(3) },
-    { cle: "vp", titre: "Précision valeur (inédites)", xs: it, ys: S.val_precision, format: pct },
-    { cle: "pc", titre: "1er coup = cible (inédites)", xs: it, ys: S.val_premier_coup, format: pct },
-    { cle: "ma", titre: "Manches par partie", xs: it, ys: S.manches, format: dec(1) },
-    { cle: "nu", titre: "Parties nulles", xs: it, ys: S.nulles, format: pct },
+      refs: Object.entries(t.ancres).filter(([k]) => k !== "glouton"),
+      aide: "Force du modèle de chaque itération, mesurée par des matchs contre des adversaires de référence et "
+        + "recalculée sur tous les résultats. Le bot glouton sert d'origine (0) ; les lignes horizontales situent "
+        + "les autres références (heur:64 = recherche guidée par l'heuristique). +200 ≈ 76 % des points contre un "
+        + "adversaire à 0, +400 ≈ 91 %. Doit monter." },
+    { cle: "pph", titre: "Parties d'auto-jeu / h", xs: it, ys: S.parties_par_heure, format: v => compact(v),
+      aide: "Débit de l'auto-jeu : parties que le réseau joue contre lui-même par heure pendant cette phase. "
+        + "Dépend du matériel et du nombre de simulations par coup ; une chute soudaine signale un goulot (GPU, CPU)." },
+    { cle: "pp", titre: "Perte de politique", xs: it, ys: S.perte_politique, format: dec(3),
+      aide: "Écart (entropie croisée) entre les coups que le réseau propose d'instinct et ceux que la recherche "
+        + "retient après réflexion. Plus elle baisse, mieux le réseau anticipe seul le bon coup. Elle ne tombe "
+        + "jamais à 0 : la cible elle-même hésite entre plusieurs coups." },
+    { cle: "pv", titre: "Perte de valeur", xs: it, ys: S.perte_valeur, format: dec(3),
+      aide: "Écart (entropie croisée) entre le pronostic victoire / nulle / défaite du réseau et l'issue réelle "
+        + "des parties. Plus elle baisse, mieux le réseau juge qui va gagner. Vers 1,1, il répond au hasard." },
+    { cle: "vp", titre: "Précision valeur (inédites)", xs: it, ys: S.val_precision, format: pct,
+      aide: "Sur des parties jamais vues à l'apprentissage : part des positions où le réseau désigne le bon "
+        + "vainqueur (pour une nulle : pronostic proche de l'équilibre). 50 % ≈ pile ou face. Mesurée sur des "
+        + "parties inédites, elle ne peut pas être gonflée par le par-cœur." },
+    { cle: "pc", titre: "1er coup = cible (inédites)", xs: it, ys: S.val_premier_coup, format: pct,
+      aide: "Sur ces mêmes parties inédites : part des positions où le coup préféré du réseau, sans aucune "
+        + "recherche, est aussi le meilleur coup trouvé par la recherche. Mesure la qualité de son intuition." },
+    { cle: "ma", titre: "Manches par partie", xs: it, ys: S.manches, format: dec(1),
+      aide: "Durée moyenne des parties d'auto-jeu, en manches (chaque joueur pioche 3 pièces par manche). "
+        + "Des parties qui raccourcissent traduisent en général un jeu plus tranchant, qui conclut plus vite." },
+    { cle: "nu", titre: "Parties nulles", xs: it, ys: S.nulles, format: pct,
+      aide: "Part des parties d'auto-jeu arrêtées à la limite de manches sans que personne ait posé tous ses "
+        + "marqueurs Contrôle. Doit baisser à mesure que les deux camps apprennent à conclure." },
   ];
   return (
     <div className="graphes">
-      {series.map(s => <MiniGraphe key={s.cle} s={s} survol={survol} setSurvol={setSurvol} />)}
+      {series.map((s, k) => <MiniGraphe key={s.cle} s={s} survol={survol} setSurvol={setSurvol} droite={k >= series.length / 2} />)}
     </div>
   );
 }
