@@ -1,0 +1,111 @@
+// Données échangées avec champ_dhonneur/server/jeu.py (page « Jouer »)
+import type { Case, Decor, Image } from "../types";
+
+export interface JoueurCfg {
+  type: "humain" | "ia";
+  niveau: number; // simulations par décision
+  modele: string | null;
+  nom?: string;
+}
+
+export interface Legal {
+  i: number;
+  n: string; // notation publique
+  d: string; // description
+  coin: string | null;
+  kind: string;
+  cells: number[];
+}
+
+export interface EtatServeur {
+  id: string;
+  version: number;
+  debut: number;
+  n: number;
+  images: Image[];
+  decor?: Decor;
+  joueurs: JoueurCfg[];
+  trait: number;
+  humain: boolean;
+  ia: boolean;
+  legal: Legal[];
+  attente: string;
+  piece_attente: string | null;
+  fini: boolean;
+  resultat: string;
+  edite: boolean;
+  mains_visibles: boolean;
+  masques: number[];
+}
+
+export interface CoupAnalyse {
+  coup: string;
+  description: string;
+  probabilite: number;
+  q: number | null;
+  visites: number;
+  score: number;
+  texte: string;
+  ligne: string[];
+  cases: number[];
+  i: number; // index du coup parmi les coups légaux
+}
+
+export interface Analyse {
+  pos: number;
+  trait: number;
+  bastions: [number, number];
+  source?: "reseau" | "materiel";
+  score?: number;
+  texte?: string;
+  appreciation?: [string, string];
+  coups: CoupAnalyse[];
+  mat?: { equipe: number; coups: number; coup: string | null } | null;
+  indisponible?: string;
+  fini?: string;
+  simulations?: number;
+  v_or?: number;
+  gain_or?: number; // part de la barre d'évaluation revenant à Or, dans [0, 1]
+}
+
+export interface UniteRegle {
+  nom: string;
+  pieces: number;
+  max: number;
+  tactique: string;
+  capacite: string;
+}
+
+export interface Regles {
+  cases: Case[];
+  cols: number;
+  max_y2: number;
+  departs: string[][];
+  unites: Record<string, UniteRegle>;
+  premiere: string[][];
+  scenarios: Record<string, string>;
+  niveaux: Record<string, string>;
+}
+
+export interface InfoIA {
+  disponible: boolean;
+  raison?: string;
+  modeles: { chemin: string; nom: string }[];
+}
+
+/** Position de l'éditeur (format de champ_dhonneur/position.py) */
+export interface Position {
+  unites: string[][];
+  plateau: { case: string; joueur: number; unite: string; pieces: number }[];
+  controle: Record<string, number>;
+  trait: number;
+  initiative: number;
+  manche: number;
+  joueurs: {
+    main: string[];
+    sac: string[];
+    defausse: string[];
+    defausse_cachee: string[];
+    reserve: Record<string, number>;
+  }[];
+}

@@ -18,9 +18,16 @@ interface Props {
   image: Image;
   joueur: number;
   nom: string;
+  /** libellé affiché tel quel sous le nom de l'équipe (sinon : nom du réseau) */
+  role?: string;
+  /** jeu : pièces de la main cliquables, pièce choisie */
+  onPiece?: (c: string) => void;
+  choisie?: string | null;
+  /** pièces en main mises en valeur (ex. pièce piochée par le Moine soldat) */
+  attente?: string | null;
 }
 
-export function Joueur({ decor, image, joueur, nom }: Props) {
+export function Joueur({ decor, image, joueur, nom, role, onPiece, choisie, attente }: Props) {
   const e = decor.equipes[joueur];
   const p = image.j[joueur];
   const trait = !image.f && image.t === joueur;
@@ -35,13 +42,26 @@ export function Joueur({ decor, image, joueur, nom }: Props) {
             {titre}
             {image.i === joueur && <span className="initiative">Initiative</span>}
           </div>
-          <div className="role">{nomJoueur(nom)}</div>
+          <div className="role">{role ?? nomJoueur(nom)}</div>
         </div>
       </div>
       <div className="bloc main-j">
         <div className="etiquette">Main</div>
         <div className="pieces">
-          {p.h.length ? p.h.map((c, k) => <Piece key={k} c={c} equipe={e} />) : <span className="vide">—</span>}
+          {attente && (
+            <span className="piochee" title="Pièce piochée par le Moine soldat, à jouer aussitôt">
+              <Piece c={attente} equipe={e} />
+            </span>
+          )}
+          {p.h.length ? p.h.map((c, k) =>
+            c === "?" ? <Piece key={k} equipe={e} cachee />
+              : onPiece ? (
+                <button key={k} type="button" className={`bouton-piece${choisie === c ? " choisie" : ""}`}
+                  onClick={() => onPiece(c)} aria-pressed={choisie === c} title={`${NOMS[c]} : voir ses coups`}>
+                  <Piece c={c} equipe={e} />
+                </button>
+              ) : <Piece key={k} c={c} equipe={e} />,
+          ) : !attente && <span className="vide">—</span>}
         </div>
       </div>
       <div className="bloc">

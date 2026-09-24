@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { nomJoueur } from "../jeu";
+import { EQUIPE, nomJoueur } from "../jeu";
 import { tableActive, useStore } from "../store";
 import type { ResumePartie, TableDirect } from "../types";
 import { Plateau } from "./Plateau";
@@ -8,7 +8,7 @@ const numero = (nom: string) => Number(nom.replace(/\D/g, "")) + 1;
 
 function etatTable(t: TableDirect, active: boolean) {
   const img = t.images[t.images.length - 1];
-  if (img.f) return img.f.g === null ? "Nulle" : `Victoire ${img.f.g ? "Noir" : "Blanc"}`;
+  if (img.f) return img.f.g === null ? "Nulle" : `Victoire ${EQUIPE[img.f.g]}`;
   return active ? "En cours" : "En attente";
 }
 
@@ -32,7 +32,7 @@ export function VignetteTable({ t, grande }: { t: TableDirect; grande?: boolean 
   );
 }
 
-const RESULTAT: Record<string, string> = { "1-0": "Blanc gagne", "0-1": "Noir gagne", "1/2-1/2": "Nulle" };
+const RESULTAT: Record<string, string> = { "1-0": "Or gagne", "0-1": "Argent gagne", "1/2-1/2": "Nulle" };
 
 function LignePartie({ p, cur }: { p: ResumePartie; cur: boolean }) {
   const regarder = useStore(s => s.regarderPartie);

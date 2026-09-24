@@ -7,7 +7,7 @@ Un relevé NCH suffit à rejouer une partie à l'identique.
 
 Le plateau est formé de colonnes verticales d'hexagones. Chaque colonne porte une lettre, de gauche à
 droite, et chaque case un numéro de bas en haut dans sa colonne (système des échecs hexagonaux de Glinski).
-Blanc est en bas, Noir en haut.
+Or (Blanc dans les relevés et en console, équipe 0) est en bas, Argent (Noir, équipe 1) en haut.
 
 ```
 Plateau 2 joueurs : colonnes a à g, de hauteurs 4-5-6-7-6-5-4 (37 cases)
@@ -117,3 +117,39 @@ continue seul. L'ordre est donc toujours implicite, comme aux échecs.
 
 La graine fixe les tirages du sac : avec le relevé complet, `champ relire partie.nch` reconstitue la
 partie coup par coup.
+
+## Évaluation d'une position
+
+L'analyse (page `/jouer`, `champ analyser`) donne un score à la manière des moteurs d'échecs,
+toujours du point de vue d'**Or** :
+
+| Notation | Lecture |
+|---|---|
+| `+12,4` | Or mène : position aussi favorable qu'environ 1,2 bastion d'avance |
+| `−3,0` | Argent mène (léger avantage) |
+| `0,0` | équilibre |
+| `#3` | victoire forcée d'Or : il pose son dernier marqueur Contrôle en 3 coups au plus |
+| `#-2` | victoire forcée d'Argent en 2 coups |
+| `1-0`, `0-1`, `½-½` | partie terminée |
+
+**Échelle : 10 points = un bastion (Lieu contrôlé) de plus que l'adversaire.** Le réseau estime
+l'espérance de gain v ∈ [-1, 1] ; sur les parties de l'entraînement, une avance de d bastions
+donne en moyenne v ≈ tanh(K·d), avec K ≈ 1,05 (un bastion d'avance ≈ 89 % de victoires). Le score
+affiché est l'avance en bastions qui donnerait les mêmes chances, multipliée par 10 :
+score = 10 · atanh(v) / K. `champ calibrer` recalcule K sur les relevés les plus récents (la
+constante est dans `champ_dhonneur/score.py`).
+
+Appréciation, comme aux échecs : `=` égalité (|score| < 3), `⩲` / `⩱` léger avantage Or / Argent
+(< 7), `±` / `∓` net avantage (< 15), `+−` / `−+` avantage décisif.
+
+**Victoire forcée.** Un *coup* est une pièce jouée, avec ses effets enchaînés (Berserk, Moine
+soldat…), comme un coup aux échecs : `#1` signifie que la pièce qu'on s'apprête à jouer gagne.
+La victoire doit tenir contre toutes les défenses et tous les tirages possibles (pièce piochée par
+le Moine soldat) ; elle est cherchée jusqu'à la fin de la manche en cours, car au-delà les pièces
+piochées dans le sac sont inconnues et rien n'est garanti. Face à une main cachée, l'adversaire
+est supposé pouvoir jouer n'importe quelle pièce qu'il pourrait avoir : l'annonce vaut alors
+quelle que soit sa main réelle.
+
+La **ligne** qui accompagne chaque coup proposé est la suite la plus explorée par la recherche,
+en notation publique, un coup par pièce jouée : `Ed4-c3  Xb1-b2  Ec3^`.
+

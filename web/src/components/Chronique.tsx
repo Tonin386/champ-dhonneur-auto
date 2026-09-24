@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useRef } from "react";
 import { EQUIPE } from "../jeu";
-import { useStore } from "../store";
+import type { Film } from "../types";
 
-/** Déroulé de la partie jusqu'au coup affiché (sans dévoiler la suite) ; cliquer pour revenir. */
-export function Chronique() {
-  const film = useStore(s => s.film);
-  const pos = useStore(s => s.pos);
+interface Props {
+  film: Pick<Film, "decor" | "images"> | null;
+  pos: number;
+  aller: (pos: number) => void;
+  /** tout le déroulé (partie jouée) ou seulement jusqu'au coup affiché (spectateur : sans dévoiler la suite) */
+  complet?: boolean;
+}
+
+/** Déroulé de la partie ; cliquer sur un coup pour y revenir. */
+export function Chronique({ film, pos, aller, complet }: Props) {
   const boite = useRef<HTMLOListElement>(null);
 
   const lignes = useMemo(() => {
@@ -22,19 +28,21 @@ export function Chronique() {
   }, [film]);
 
   useEffect(() => {
-    const b = boite.current;   // le coup affiché est toujours le dernier de la liste
-    if (b) b.scrollTop = b.scrollHeight;
-  }, [pos, film]);
+    const b = boite.current;
+    if (!b) return;
+    if (!complet) { b.scrollTop = b.scrollHeight; return; }   // le coup affiché est le dernier de la liste
+    b.querySelector(".cur")?.scrollIntoView({ block: "nearest" });
+  }, [pos, film, complet]);
 
   if (!film) return null;
   return (
     <ol className="chronique" ref={boite} aria-label="Déroulé de la partie">
-      {lignes.filter(l => l.k <= pos).map(l => (
+      {lignes.filter(l => complet || l.k <= pos).map(l => (
         <li
           key={l.k}
-          className={`e${l.e}${l.k === pos ? " cur" : ""}${l.nouvelle ? " manche" : ""}`}
+          className={`e${l.e}${l.k === pos ? " cur" : ""}${l.k > pos ? " apres" : ""}${l.nouvelle ? " manche" : ""}`}
           data-manche={l.nouvelle ? `Manche ${l.r}` : undefined}
-          onClick={() => { useStore.setState({ lecture: false }); useStore.getState().aller(l.k); }}
+          onClick={() => aller(l.k)}
         >
           <span className="pastille" aria-label={EQUIPE[l.e]} />
           <code>{l.n}</code>

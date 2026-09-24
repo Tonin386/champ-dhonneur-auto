@@ -370,8 +370,11 @@ def lire_position(gid: str, pos: int | None = None):
     s = session(gid)
     with s.lock:
         g = s.jeu_a(len(s.actions) if pos is None else pos)
-    if s.masques() and not g.done:
-        raise HTTPException(400, "Position indisponible : la main de l'IA est cachée (affichez les mains)")
+    masques = s.masques()
+    if masques and not g.done:
+        # information cachée de l'IA : répartition tirée au hasard, compatible avec ce que sait l'humain
+        humain = next(i for i in range(2) if i not in masques)
+        return dict(position(g.determinize(humain)), hasard=True)
     return position(g)
 
 
@@ -411,8 +414,9 @@ def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: st
         masques = set() if g.done else s.masques()
     base = {"pos": n, "trait": g.to_move, "bastions": bastions(g)}
     if g.done:
-        return dict(base, fini=g.result_label(), texte=g.result_label().replace("1/2-1/2", "½-½"),
-                    score=0.0 if g.winner is None else (99.9 if g.winner == 0 else -99.9), coups=[])
+        return dict(base, fini=g.result_label(), texte=g.result_label().replace("1/2-1/2", "½-½"), coups=[],
+                    score=0.0 if g.winner is None else (99.9 if g.winner == 0 else -99.9),
+                    gain_or=0.5 if g.winner is None else float(g.winner == 0))
     if g.to_move in masques:
         return dict(base, indisponible="L'IA réfléchit : l'analyse reprend à votre tour "
                                        "(elle n'utilise que ce que vous savez).")
@@ -430,7 +434,7 @@ def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: st
             out.update(texte=texte_mat(mat["equipe"], mat["coups"]),
                        mat={"equipe": mat["equipe"], "coups": mat["coups"],
                             "coup": mat["action"] and action_str(g, mat["action"], hidden=False)})
-        return out
+        return _gain(out)
     from ..ia.analyse import analyser
     simulations = max(32, min(3200, simulations))
     with _ANALYSTE_VERROU:
@@ -439,6 +443,19 @@ def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: st
         except (FileNotFoundError, ImportError) as e:
             raise HTTPException(400, f"IA indisponible : {e}")
         r = analyser(g, bot, top=6, observateur=observateur)
+    legal = g.legal_actions()
     for c in r["coups"]:
-        c.pop("action", None)
-    return dict(base, source="reseau", **{k: v for k, v in r.items() if k != "bastions"})
+        action = c.pop("action")
+        c["cases"] = list(action.cells)
+        c["i"] = legal.index(action)            # index du coup pour le jouer depuis l'analyse
+    return _gain(dict(base, source="reseau", **{k: v for k, v in r.items() if k != "bastions"}))
+
+
+def _gain(out: dict) -> dict:
+    """Part de la barre d'évaluation revenant à Or (espérance de gain ramenée dans [0, 1])."""
+    from ..score import vers_valeur
+    if out.get("mat"):
+        out["gain_or"] = 1.0 if out["mat"]["equipe"] == 0 else 0.0
+    elif out.get("score") is not None:
+        out["gain_or"] = round((1 + vers_valeur(out["score"])) / 2, 4)
+    return out

@@ -119,6 +119,7 @@ export function Barre() {
         <button type="button" onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())} title="Plein écran (F)">
           Plein écran
         </button>
+        <a className="bouton lien-page" href="/jouer" title="Jouer contre l'IA entraînée, analyser une position">Jouer</a>
         <span className={`connexion${connecte ? " ok" : ""}`} title={connecte ? "Connecté au flux en direct" : "Reconnexion…"} />
       </div>
     </header>

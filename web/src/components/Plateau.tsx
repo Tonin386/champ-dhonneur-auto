@@ -12,6 +12,15 @@ interface Props {
   mini?: boolean;
   /** clé du coup affiché : relance les animations ponctuelles */
   cle?: number;
+  /** jeu : cases jouables (attaque = cible ennemie), case choisie, coup survolé ou conseillé */
+  cibles?: Map<number, "attaque" | "jouable">;
+  choisie?: number | null;
+  survol?: number[] | null;
+  conseil?: number[] | null;
+  /** clic sur une case (droit = clic droit, pour l'éditeur) */
+  onCase?: (i: number, droit: boolean) => void;
+  /** cases qui réagissent au clic (toutes si absent) */
+  cliquables?: Set<number>;
 }
 
 const ATTAQUES = new Set(["attack"]);
@@ -48,7 +57,16 @@ function Unite({ u, decor, x, y, mini }: { u: UniteImg; decor: Decor; x: number;
   );
 }
 
-export const Plateau = memo(function Plateau({ decor, image, precedente, duree = 400, mini, cle }: Props) {
+/** Flèche d'une case à l'autre, arrêtée avant le centre de l'arrivée. */
+function Fleche({ G, de, a, cls, marqueur }: { G: ReturnType<typeof geometrie>; de: number; a: number; cls: string; marqueur: string }) {
+  const [x1, y1] = G.centre(de);
+  const [x2, y2] = G.centre(a);
+  const L = Math.hypot(x2 - x1, y2 - y1);
+  const k = (L - G.s * 0.62) / L;
+  return <line className={cls} x1={x1} y1={y1} x2={x1 + (x2 - x1) * k} y2={y1 + (y2 - y1) * k} markerEnd={marqueur} />;
+}
+
+export const Plateau = memo(function Plateau({ decor, image, precedente, duree = 400, mini, cle, cibles, choisie, survol, conseil, onCase, cliquables }: Props) {
   const G = geometrie(decor);
   const a = image.a;
   const cases = a?.c ?? [];
@@ -74,6 +92,9 @@ export const Plateau = memo(function Plateau({ decor, image, precedente, duree =
         <marker id="pointe-a" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" orient="auto">
           <path d="M0,0 L10,5 L0,10 z" className="pointe attaque" />
         </marker>
+        <marker id="pointe-c" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="3.4" markerHeight="3.4" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" className="pointe conseil" />
+        </marker>
         <radialGradient id="parchemin" cx="50%" cy="40%" r="70%">
           <stop offset="0%" stopColor="var(--case-clair)" />
           <stop offset="100%" stopColor="var(--case)" />
@@ -86,12 +107,14 @@ export const Plateau = memo(function Plateau({ decor, image, precedente, duree =
           lieu && "lieu",
           i === cible && (a && ATTAQUES.has(a.k) ? "cible attaque" : "cible"),
           i === depart && "depart",
+          (i === choisie || survol?.includes(i)) && "choisie",
         ].filter(Boolean).join(" ");
         const t = controle.get(i);
         const R = G.s * (t === undefined ? 0.58 : 0.74);
         return (
           <g key={i}>
             <polygon className={cls} points={hexagone(x, y, G.s - 1.2)} />
+            {cibles?.has(i) && <polygon className={`teinte-cible ${cibles.get(i)}`} points={hexagone(x, y, G.s - 3)} />}
             {lieu && (
               <image
                 key={t ?? "libre"}
@@ -104,20 +127,10 @@ export const Plateau = memo(function Plateau({ decor, image, precedente, duree =
           </g>
         );
       })}
-      {depart !== null && cible !== null && depart !== cible && (() => {
-        const [x1, y1] = G.centre(depart);
-        const [x2, y2] = G.centre(cible);
-        const L = Math.hypot(x2 - x1, y2 - y1);
-        const k = (L - G.s * 0.62) / L;
-        return (
-          <line
-            key={`fl${cle}`}
-            className={`fleche${a && ATTAQUES.has(a.k) ? " attaque" : ""}`}
-            x1={x1} y1={y1} x2={x1 + (x2 - x1) * k} y2={y1 + (y2 - y1) * k}
-            markerEnd={a && ATTAQUES.has(a.k) ? "url(#pointe-a)" : "url(#pointe)"}
-          />
-        );
-      })()}
+      {depart !== null && cible !== null && depart !== cible && (
+        <Fleche key={`fl${cle}`} G={G} de={depart} a={cible} cls={`fleche${a && ATTAQUES.has(a.k) ? " attaque" : ""}`}
+          marqueur={a && ATTAQUES.has(a.k) ? "url(#pointe-a)" : "url(#pointe)"} />
+      )}
       {disparues.map(u => {
         const [x, y] = G.centre(u[1]);
         return (
@@ -129,6 +142,31 @@ export const Plateau = memo(function Plateau({ decor, image, precedente, duree =
       {image.u.map(u => {
         const [x, y] = G.centre(u[1]);
         return <Unite key={u[0]} u={u} decor={decor} x={x} y={y} mini={mini} />;
+      })}
+      {conseil && conseil.length > 1 && conseil[0] !== conseil[conseil.length - 1] && (
+        <Fleche G={G} de={conseil[0]} a={conseil[conseil.length - 1]} cls="fleche conseil" marqueur="url(#pointe-c)" />
+      )}
+      {conseil && conseil.length === 1 && (() => {
+        const [x, y] = G.centre(conseil[0]);
+        return <circle className="anneau-conseil" cx={x} cy={y} r={G.s * 0.78} />;
+      })()}
+      {cibles && [...cibles].map(([i, t]) => {
+        const [x, y] = G.centre(i);
+        const occupee = image.u.some(u => u[1] === i);
+        return occupee || t === "attaque"
+          ? <circle key={`c${i}`} className={`cible-anneau ${t}`} cx={x} cy={y} r={G.s * 0.8} />
+          : <circle key={`c${i}`} className={`cible-point ${t}`} cx={x} cy={y} r={G.s * 0.24} />;
+      })}
+      {onCase && decor.cases.map((_, i) => {
+        if (cliquables && !cliquables.has(i)) return null;
+        const [x, y] = G.centre(i);
+        return (
+          <polygon
+            key={`z${i}`} className="zone-clic" points={hexagone(x, y, G.s - 1.2)}
+            onClick={() => onCase(i, false)}
+            onContextMenu={e => { e.preventDefault(); onCase(i, true); }}
+          />
+        );
       })}
       {cible !== null && !mini && (() => {
         const [x, y] = G.centre(cible);

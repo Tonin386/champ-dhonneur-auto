@@ -1,7 +1,7 @@
 // Constantes et géométrie du jeu, partagées par les composants.
 import type { Decor } from "./types";
 
-export const EQUIPE = ["Blanc", "Noir"] as const;
+export const EQUIPE = ["Or", "Argent"] as const;
 
 export const NOMS: Record<string, string> = {
   A: "Archer", B: "Berserk", C: "Cavalerie", D: "Porte étendard", E: "Éclaireur", F: "Fantassin",
@@ -22,7 +22,7 @@ export interface Geometrie {
 
 const CACHE = new WeakMap<Decor, Geometrie>();
 
-/** Hexagones « à sommet plat » en colonnes ; Blanc en bas, Noir en haut. */
+/** Hexagones « à sommet plat » en colonnes ; Or en bas, Argent en haut. */
 export function geometrie(d: Decor): Geometrie {
   const g0 = CACHE.get(d);
   if (g0) return g0;

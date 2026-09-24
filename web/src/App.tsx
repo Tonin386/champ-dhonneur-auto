@@ -135,7 +135,7 @@ function EnTetePartie() {
         {type}{e.Iteration ? ` · itération ${e.Iteration}` : ""}
       </span>
       <span className="qui">
-        {memeJoueur ? `${nomJoueur(e.Blanc)} contre lui-même` : `${nomJoueur(e.Blanc)} (Blanc) contre ${nomJoueur(e.Noir)} (Noir)`}
+        {memeJoueur ? `${nomJoueur(e.Blanc)} contre lui-même` : `${nomJoueur(e.Blanc)} (Or) contre ${nomJoueur(e.Noir)} (Argent)`}
       </span>
     </div>
   );
@@ -176,6 +176,12 @@ function Scene() {
       <div className="colonne-joueur">{joueurs(1).map(j => <Joueur key={j} decor={d} image={img} joueur={j} nom={nom(j)} />)}</div>
     </div>
   );
+}
+
+function ChroniqueDirect() {
+  const film = useStore(s => s.film);
+  const pos = useStore(s => s.pos);
+  return <Chronique film={film} pos={pos} aller={k => { useStore.setState({ lecture: false }); useStore.getState().aller(k); }} />;
 }
 
 export function App() {
@@ -222,7 +228,7 @@ export function App() {
         <div className="droite">
           <section className="panneau chronique-p" aria-label="Déroulé">
             <h2>Déroulé</h2>
-            <Chronique />
+            <ChroniqueDirect />
           </section>
           <Cote />
         </div>

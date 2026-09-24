@@ -42,7 +42,7 @@ Sans Docker (Python ≥ 3.11) :
 
 ```bash
 pip install -e ".[dev]"
-champ serveur                                         # spectateur (/) et partie contre les bots (/jouer)
+champ serveur                                         # spectateur (/) et page Jouer (/jouer)
 champ jouer --blanc humain --noir mcts --unites premiere
 champ jouer --mode 4J --joueurs humain,mcts,glouton,mcts
 champ arene mcts:2000 glouton --parties 40 --dossier parties/
@@ -55,11 +55,12 @@ champ banc --config configs/rtx-a5000-laptop.json     # calibrage matériel
 champ entrainer --config configs/rtx-a5000-laptop.json  # entraînement complet
 champ suivi runs/principal                            # tableau de bord
 champ jouer --blanc humain --noir ia:400              # jouer contre le réseau
-champ analyser partie.nch --coup 30                   # meilleurs coups d'une position
+champ analyser partie.nch --coup 30                   # score, victoire forcée, meilleurs coups
+champ calibrer runs/continu/parties                   # recalcule l'échelle du score
 ```
 
 Options d'unités : `premiere` (répartition conseillée du livret), `aleatoire`, ou explicite
-`SPXH/ACLE` (Blanc/Noir). Bots : `aleatoire`, `glouton`, `mcts`, `mcts:2000` (itérations),
+`SPXH/ACLE` (Or/Argent, appelés Blanc/Noir en console). Bots : `aleatoire`, `glouton`, `mcts`, `mcts:2000` (itérations),
 `mcts:t=3` (secondes par décision), `heur:200` (recherche Gumbel guidée par l'heuristique),
 `ia`, `ia:800`, `ia:t=2`, `ia:modele=chemin.pt,sims=400,dispositif=cuda` (réseau entraîné).
 
@@ -77,7 +78,30 @@ l'entraînement le plus récent de `runs/` :
 - tableau de bord : phase en cours et avancement de l'itération, Elo, débit, pertes, précision.
 
 Raccourcis : espace (lecture/pause), ← → (coup par coup), D (direct), M (mosaïque), R (régie),
-F (plein écran), 1–9 (table). La partie contre les bots reste disponible sur `/jouer`.
+F (plein écran), 1–9 (table). Survolez le titre d'un graphique pour savoir ce qu'il mesure.
+
+## Jouer, analyser, éditer une position
+
+`/jouer` reprend la disposition du direct (Or à gauche et en bas du plateau, Argent à droite et
+en haut) :
+
+- **joueurs** : Humain ou IA entraînée pour chaque camp (Humain contre Humain, Humain contre IA,
+  IA contre IA), avec le niveau (simulations par décision) et le modèle (meilleur modèle ou une
+  itération précise) ; face à l'IA, sa main et ses pièces jouées face cachée restent secrètes ;
+- **jeu** : cliquer une pièce de la main puis une case en surbrillance, ou un coup de la liste ;
+  « Annuler mon coup », parcours de la partie (← →) et « Reprendre d'ici » pour rejouer une autre
+  suite ;
+- **analyse** (A) : le réseau évalue la position affichée, à tout moment de la partie, avec une
+  barre d'évaluation, ses meilleurs coups et la suite qu'il attend, et une courbe de l'évaluation.
+  Face à l'IA, l'analyse n'utilise que l'information du joueur humain ;
+- **éditeur de position** (E) : unités de chaque camp, pièces sur le plateau, marqueurs, main,
+  sac, défausses, réserve, trait et initiative ; puis « Jouer à partir d'ici » ou « Analyser ».
+
+L'évaluation se lit comme celle d'un moteur d'échecs (détails dans
+[docs/NOTATION.md](docs/NOTATION.md#évaluation-dune-position)) : **10 points = un bastion (Lieu
+contrôlé) d'avance**, positif quand Or mène, négatif quand Argent mène (`+12,4`, `−3,0`),
+symboles `=` `⩲` `±` `+−` ; **`#3`** : Or gagne de force en 3 coups au plus, **`#-2`** : Argent
+en 2.
 
 La diffusion en direct fonctionne avec les deux moteurs d'auto-jeu (Python et Rust).
 
@@ -98,7 +122,7 @@ automatiquement, même après un redémarrage de la machine :
   Bradley-Terry est réajusté sur tous les résultats à chaque évaluation : l'Elo des modèles
   précédents est réévalué et la courbe du spectateur affiche ces valeurs à jour. Il reprend là où
   il s'était arrêté.
-- `web-ia` : le spectateur et `/jouer`, dont le bot IA suit le meilleur modèle de l'entraînement
+- `web-ia` : le spectateur et `/jouer`, dont l'IA suit le meilleur modèle de l'entraînement
   (rechargé dès qu'il change).
 
 L'auto-jeu utilise le **moteur Rust** (`rust/`, module `champ_rs`) : règles, déterminisations,
@@ -124,12 +148,15 @@ champ_dhonneur/
   units.py        les 16 unités, leur lettre, leurs pièces
   engine.py       état, actions légales, application ; pile de décisions en attente
   notation.py     notation NCH, relevés .nch (export / import / relecture)
+  position.py     position quelconque (éditeur) : export, reconstruction validée
+  score.py        score de position (10 = un bastion), victoires forcées « #n »
   render.py       plateau en texte
   cli.py          console : jouer, arène, relire, serveur
   arena.py        tournois bot contre bot
   bots/           aléatoire, glouton (heuristique), IS-MCTS, IA (réseau + recherche)
   server/         API FastAPI ; spectateur.py (tableau de bord, direct SSE, rediffusions),
-                  web/ (spectateur compilé), static/ (page de jeu /jouer et images)
+                  jeu.py (parties Humain / IA, analyse, positions), web/ (interface
+                  compilée), static/img/ (images)
   ia/
     encodage.py     observation du joueur au trait (46 jetons), actions par caractéristiques
     modele.py       transformeur + têtes valeur (V/N/D) et politique « pointeur »
@@ -138,12 +165,12 @@ champ_dhonneur/
     autojeu.py      parties simultanées, playout cap randomization
     entrainement.py boucle auto-jeu → apprentissage → évaluation, reprenable
     evaluation.py   matchs appariés, classement Elo Bradley-Terry
-    analyse.py      analyse de position lisible, tableau de bord d'entraînement
+    analyse.py      analyse de position (score, ligne principale), tableau de bord
     banc.py         banc d'essai matériel (inférence, débit d'auto-jeu, recommandation)
     rs.py           pont vers le moteur Rust (auto-jeu, relevés, direct)
     direct.py       diffusion des parties en cours pour le spectateur
 rust/             moteur Rust (PyO3) : règles, encodage, recherche, auto-jeu (module champ_rs)
-web/              sources du spectateur grand écran (Vite + React + TypeScript)
+web/              sources de l'interface (Vite + React + TypeScript) : direct (/) et jouer/
 configs/          continu.json, test.json, cpu-demo.json, gpu.json, rtx-a5000-laptop.json
 tests/            règles unité par unité, parties aléatoires, notation, IA
 docs/             NOTATION.md, REGLES.md, IA.md
