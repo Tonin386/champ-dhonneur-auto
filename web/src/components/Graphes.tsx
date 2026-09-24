@@ -12,9 +12,17 @@ interface Serie {
   format: (v: number) => string;
   /** lignes de référence (ancres d'Elo) */
   refs?: [string, number][];
+  /** échelle fixe [bas, haut minimal] au lieu de l'échelle ajustée aux valeurs */
+  echelle?: [number, number];
 }
 
 const pct = (v: number) => `${(100 * v).toFixed(0)} %`;
+/** pourcentages parfois minuscules (une nulle sur 2 048 parties = 0,05 %) */
+const pctFin = (v: number) => {
+  const p = 100 * v;
+  const t = p === 0 || p >= 10 ? p.toFixed(0) : p >= 1 ? p.toFixed(1) : p.toFixed(2);
+  return `${t.replace(/\.?0+$/, "").replace(".", ",") || "0"} %`;
+};
 const dec = (n: number) => (v: number) => v.toFixed(n).replace(".", ",");
 const signe = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v))}`;
 
@@ -44,7 +52,9 @@ function MiniGraphe({ s, survol, setSurvol, droite }: { s: Serie; survol: number
   );
   const { w, h } = taille;
   const gx = 8, gy = 8, bas = 16;
-  const [lo, hi] = bornes(pts.map(p => p[1]).concat((s.refs ?? []).map(r => r[1])));
+  const vals = pts.map(p => p[1]).concat((s.refs ?? []).map(r => r[1]));
+  // échelle fixe : de la valeur basse jusqu'au plafond minimal (ou au-delà, avec une marge)
+  const [lo, hi] = s.echelle ? [s.echelle[0], Math.max(s.echelle[1], ...vals.map(v => v * 1.15))] : bornes(vals);
   const x0 = pts.length ? pts[0][0] : 0, x1 = pts.length ? Math.max(pts[pts.length - 1][0], x0 + 1) : 1;
   const X = (x: number) => gx + ((w - 2 * gx) * (x - x0)) / (x1 - x0);
   const Y = (v: number) => gy + ((h - gy - bas) * (hi - v)) / (hi - lo);
@@ -98,6 +108,7 @@ function MiniGraphe({ s, survol, setSurvol, droite }: { s: Serie; survol: number
                 <circle cx={X(actif[0])} cy={Y(actif[1])} r={4.5} />
               </g>
             )}
+            {s.echelle && <text className="borne" x={gx} y={gy + 8}>{s.format(hi)}</text>}
             <text className="borne" x={gx} y={h - 3}>it. {x0}</text>
             <text className="borne" x={w - gx} y={h - 3} textAnchor="end">it. {pts[pts.length - 1][0]}</text>
           </svg>
@@ -138,7 +149,7 @@ export function Graphes({ t }: { t: Tableau }) {
     { cle: "ma", titre: "Manches par partie", xs: it, ys: S.manches, format: dec(1),
       aide: "Durée moyenne des parties d'auto-jeu, en manches (chaque joueur pioche 3 pièces par manche). "
         + "Des parties qui raccourcissent traduisent en général un jeu plus tranchant, qui conclut plus vite." },
-    { cle: "nu", titre: "Parties nulles", xs: it, ys: S.nulles, format: pct,
+    { cle: "nu", titre: "Parties nulles", xs: it, ys: S.nulles, format: pctFin, echelle: [0, 0.05],
       aide: "Part des parties d'auto-jeu arrêtées à la limite de manches sans que personne ait posé tous ses "
         + "marqueurs Contrôle. Doit baisser à mesure que les deux camps apprennent à conclure." },
   ];
