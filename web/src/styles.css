@@ -391,6 +391,7 @@ button.pause-demandee { border-color: var(--or); color: var(--or); }
 .pieces-possibles { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
 .pieces-possibles .etiquette { font-size: 0.75rem; color: var(--texte-3); text-transform: uppercase; letter-spacing: 0.06em; margin-right: 0.3rem; }
 .invite-saisie { margin: 0 0 0.4rem; color: var(--or); font-weight: 700; }
+.invite-saisie button { margin-left: 0.2rem; font-size: 0.85rem; font-weight: 500; }
 .a-reproduire { color: var(--texte); }
 .a-reproduire b { color: var(--or); }
 .chronique .pioche-ia { display: block; color: var(--texte-3); font-size: 0.8rem; }
@@ -402,8 +403,6 @@ button.pause-demandee { border-color: var(--or); color: var(--or); }
 .bascule.aides .lib { font-size: 0.8rem; color: var(--texte-3); text-transform: uppercase; letter-spacing: 0.05em; margin-right: 0.45rem; }
 .bascule.aides > .lib + button { border-radius: 0.4rem 0 0 0.4rem; border-left: 1px solid var(--bord); }
 .bascule.aides button { font-size: 0.9rem; padding: 0.3rem 0.6rem; }
-.pilotage { display: flex; align-items: center; gap: 0.4rem; }
-.pilotage select { font-size: 0.85rem; }
 
 /* historique des parties */
 .dialogue.historique { width: min(64rem, calc(100vw - 2rem)); }
@@ -482,7 +481,19 @@ button.danger { background: rgba(224, 96, 74, 0.25); border-color: var(--attaque
 .meilleurs .c { grid-area: c; color: var(--or); font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .meilleurs .d { grid-area: d; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .meilleurs .p { grid-area: p; font-size: 0.8rem; color: var(--texte-3); text-align: right; font-variant-numeric: tabular-nums; }
-.meilleurs .l { grid-area: l; font: 0.78rem var(--mono); color: var(--texte-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ligne entière (sur plusieurs lignes au besoin), chaque coup à la couleur du camp qui le joue */
+.meilleurs .l { grid-area: l; font: 0.78rem var(--mono); color: var(--texte-3); display: flex; flex-wrap: wrap; gap: 0.1rem 0.6em; }
+.meilleurs .l .m.e0 { color: var(--or-score); }
+.meilleurs .l .m.e1 { color: var(--argent-score); }
+/* réflexion de l'IA : c'est l'utilisateur qui décide quand elle joue */
+.tete-reflexion { display: flex; gap: 0.6rem; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  padding: 0.45rem 0.6rem; border-left: 0.2rem solid var(--or); background: var(--fond-2); border-radius: 0.2rem; }
+.tete-reflexion > div { display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.85rem; color: var(--texte-2); min-width: 0; }
+.tete-reflexion b { color: var(--or); font-size: 0.95rem; }
+.jouer-maintenant { display: inline-flex; gap: 0.45rem; align-items: baseline; white-space: nowrap; }
+.jouer-maintenant code { font-size: 0.85rem; font-weight: 500; }
+.attente-ia { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
+.attente-ia p { margin: 0; }
 .legende-eval { font-size: 0.85rem; color: var(--texte-2); }
 .legende-eval summary { cursor: pointer; color: var(--texte-3); }
 .legende-eval dl { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: 0.3rem 0.6rem; margin: 0.5rem 0 0; }

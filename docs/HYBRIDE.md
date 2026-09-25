@@ -1,7 +1,8 @@
 # Mode hybride : jouer sur un vrai plateau contre l'IA
 
-La partie se joue sur la table, avec le matériel. L'écran tient le rôle de l'IA : on y saisit ce
-qui se passe sur la table, l'IA répond, et on reproduit ses coups sur le plateau.
+La partie se joue sur la table, avec le matériel. L'écran tient le jeu de l'IA : on y saisit ce
+qui se passe sur la table, on y choisit chaque coup de l'IA en s'aidant de ses meilleures lignes,
+comme avec un moteur d'échecs, et on le reproduit sur le plateau. L'IA ne joue jamais seule.
 
 Deux exigences :
 
@@ -133,12 +134,18 @@ Ce que la solution garantit :
    La même garantie vaut pour les parties à l'écran contre l'IA.
 4. **Pioches futures simulées** : la recherche tire les pioches futures avec son propre
    générateur, jamais avec celui du moteur, qui en partie à l'écran détermine les vraies pioches.
-5. **Choix du coup** : l'IA joue d'office une victoire forcée trouvée par le solveur exact (avec
-   sa seule information), sinon le meilleur coup de sa recherche. Elle peut réfléchir à un nombre
-   fixe de simulations ou pendant une durée par coup (« Réflexion au temps »).
-6. **Analyse** : elle est toujours calculée du point de vue de l'IA. Quand le joueur plateau a le
-   trait, elle ne donne que l'évaluation vue par l'IA (moyenne sur des mains possibles), sans
-   meilleurs coups : ce seraient ceux d'une main fictive.
+5. **Choix du coup : par l'opérateur.** L'IA ne joue jamais d'elle-même (comme dans tous les
+   modes de la page « Jouer »). À son tour, l'écran propose ses coups réels (sa main est connue)
+   et sa réflexion, sans limite par défaut, classe ses meilleures lignes : score, part des
+   simulations, suite attendue, chaque coup de la suite à la couleur du camp qui le joue. On
+   clique une ligne, « Jouer son meilleur coup » (Espace, route `/ia`), ou l'on choisit la pièce
+   puis la case : c'est ce coup qui est joué. La première ligne est celle que l'IA jouerait : une
+   victoire forcée trouvée par le solveur exact (avec sa seule information), sinon le coup le plus
+   exploré par sa recherche.
+6. **Analyse** : elle est toujours calculée du point de vue de l'IA, avec le modèle choisi pour
+   elle. À son tour, elle donne ses meilleures lignes. Quand le joueur plateau a le trait, elle ne
+   donne que l'évaluation vue par l'IA (moyenne sur des mains possibles), sans meilleurs coups :
+   ce seraient ceux d'une main fictive.
 7. **Affichage** : la main du joueur plateau et ses pièces face cachée restent masquées, même en
    fin de partie, puisqu'elles sont fictives.
 
@@ -146,17 +153,18 @@ Deux limites, qui ne sont pas des fuites :
 
 - **Inférence** : l'IA ne déduit rien du comportement adverse (« il passe souvent, il a une
   mauvaise main »). C'est la piste « tête de croyance » de `docs/IA.md`.
-- **L'opérateur voit la main de l'IA** : il saisit les pioches de l'IA, puis prend dans sa main les
-  pièces qu'elle joue face cachée. S'il est aussi le joueur plateau, l'avantage est pour lui, pas
-  pour l'IA. Pour une partie à l'aveugle, il faut un tiers pour tenir le sac de l'IA.
+- **L'opérateur voit la main de l'IA** : il saisit ses pioches et choisit ses coups ; il joue donc
+  le camp de l'IA, conseillé par elle. S'il est aussi le joueur plateau, l'avantage est pour lui.
+  Pour une partie à l'aveugle, il faut un tiers pour tenir le camp de l'IA.
 
 ## 4. Déroulé d'une manche
 
 1. **Début de manche** : piocher 3 pièces dans le sac de l'IA et les saisir une à une. Le joueur
    plateau pioche les siennes, qui ne sont pas saisies.
-2. **Tour de l'IA** : l'écran annonce son coup, avec la pièce à prendre dans sa main ; on le
-   reproduit sur la table. Si son Moine soldat attaque ou contrôle, on pioche une pièce dans son
-   sac et on la saisit.
+2. **Tour de l'IA** : l'écran affiche sa réflexion (onglet « Réflexion de l'IA ») ; on choisit
+   son coup, une ligne, son meilleur coup ou une pièce de sa main puis la case, et on le reproduit
+   sur la table. Ses suites (Berserk, Soldat…) se choisissent de même. Si son Moine soldat attaque ou
+   contrôle, on pioche une pièce dans son sac et on la saisit.
 3. **Tour du joueur plateau** : il joue sur la table, puis on saisit son coup : la pièce jouée (ou
    « cachée »), puis la case sur le plateau ou le coup dans la liste, puis ses suites éventuelles.
 4. Quand toutes les mains sont vides, on revient à l'étape 1.
@@ -168,11 +176,15 @@ Deux limites, qui ne sont pas des fuites :
 - `champ_dhonneur/engine.py` : `determinize` trie les pièces cachées avant de les mélanger (seul
   changement du moteur).
 - `champ_dhonneur/server/jeu.py` : sessions hybrides (`hybride: true`, une IA et un joueur
-  plateau) ; routes `/tirage` et `/tirage/annuler` ; historique en étapes (coup + pioches).
+  plateau, les coups des deux camps choisis à l'écran : `Session.choisit`, `Session.coups`) ;
+  routes `/tirage` et `/tirage/annuler` ; historique en étapes (coup + pioches).
+- `champ_dhonneur/ia/analyse.py` : meilleures lignes, avec l'équipe qui joue chaque coup de la
+  suite (`equipes`).
 - `web/src/jouer/` : option « Sur plateau réel » dans « Nouvelle partie » et dans l'éditeur ;
-  panneau de pioche de l'IA ; choix de la pièce jouée par le joueur plateau ; coups de l'IA à
-  reproduire, affichés sous le plateau.
+  panneau de pioche de l'IA ; choix de la pièce jouée par le joueur plateau ; au tour de l'IA,
+  onglet « Réflexion de l'IA » ouvert d'office, une ligne cliquée joue son premier coup ; coups de
+  l'IA à reproduire, affichés sous le plateau.
 - `tests/test_hybride.py` : une partie « physique » complète, simulée avec une vraie partie
   cachée, est reproduite par la session hybride (aucun coup réel refusé, état public identique à
-  chaque étape) ; décision de l'IA invariante selon la répartition fictive ; annulation et reprise
-  déterministes.
+  chaque étape) ; l'IA ne joue pas seule, « Jouer son meilleur coup » joue sa première ligne ;
+  décision de l'IA invariante selon la répartition fictive ; annulation et reprise déterministes.

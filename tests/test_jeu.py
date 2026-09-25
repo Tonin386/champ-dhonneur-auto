@@ -173,3 +173,42 @@ def test_analyse_progressive_et_coup_joue(monkeypatch):
     a = c.post(f"/api/jeu/{gid}/analyse?pos=1&simulations=64").json()
     assert a["coups"] and a["simulations"] == 64
     assert "profondeur" in a
+
+
+def test_l_ia_joue_quand_on_le_lui_demande(monkeypatch):
+    """L'IA ne joue jamais d'elle-même : à son tour, sa réflexion (analyse avec sa seule information
+    et son modèle) propose ses lignes ; /ia joue le premier coup de cette réflexion, ou, sans
+    réflexion sur la position, celui d'une courte recherche."""
+    from champ_dhonneur.bots.neural import NeuralBot
+    from champ_dhonneur.server import jeu
+    monkeypatch.setattr(jeu, "torch_present", lambda: True)
+    monkeypatch.setattr(jeu, "modeles", lambda: [{"chemin": "heur", "nom": "heuristique"}])
+    bot = NeuralBot(heuristique=True, seed=0)
+    bot.k = None
+    vus = []
+    monkeypatch.setattr(jeu, "_analyste", lambda modele: vus.append(modele) or bot)
+    monkeypatch.setattr(jeu, "SIMS_SANS_REFLEXION", 16)
+    c = TestClient(app)
+    assert "niveaux" not in c.get("/api/jeu/regles").json()
+    # anciens réglages de niveau (parties enregistrées, navigateur) : ignorés
+    e = c.post("/api/jeu", json={"mode": "libre", "premier": 1, "joueurs": [
+        {"type": "humain", "niveau": 800}, {"type": "ia", "niveau": 800, "duree": 5, "modele": "heur"}]}).json()
+    gid = e["id"]
+    assert e["ia"] and not e["humain"] and e["legal"] == []
+    assert e["joueurs"][1]["nom"] == "IA entraînée — heuristique"
+    assert c.get(f"/api/jeu/{gid}").json()["n"] == 1                  # rien ne se joue de soi-même
+    assert c.post(f"/api/jeu/{gid}/jouer", json={"index": 0}).status_code == 400
+    a = c.post(f"/api/jeu/{gid}/analyse?simulations=64").json()
+    assert vus == ["heur"] and a["observateur"] == 1 and a["coups"] and "indisponible" not in a
+    s = jeu.SESSIONS[gid]
+    g = s.game.copy()
+    meilleur = g.legal_actions()[a["coups"][0]["i"]]
+    e = c.post(f"/api/jeu/{gid}/ia").json()
+    assert s.actions == [meilleur] and e["n"] == 2
+    # sans réflexion sur la position : courte recherche, coup légal
+    e = c.post("/api/jeu", json={"mode": "libre", "premier": 0,
+                                 "joueurs": [{"type": "ia"}, {"type": "ia"}]}).json()
+    s = jeu.SESSIONS[e["id"]]
+    legal = s.game.legal_actions()
+    e = c.post(f"/api/jeu/{e['id']}/ia").json()
+    assert e["n"] == 2 and s.actions[0] in legal

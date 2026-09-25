@@ -5,8 +5,12 @@ Trois mises en place :
   * libre : les deux armées de 4 unités sont composées avant la partie ;
   * position : une position composée dans l'éditeur.
 
+L'IA ne joue jamais d'elle-même : à son tour, elle réfléchit (l'analyse de la position, avec sa
+seule information et son modèle, progressive, sans limite par défaut) et c'est l'utilisateur qui
+décide quand elle joue (/ia) : elle joue alors le premier coup de sa réflexion, telle qu'elle en est.
+
 Partie hybride (`hybride`, docs/HYBRIDE.md) : la partie se joue sur un vrai plateau contre l'IA.
-On saisit les pioches de l'IA (pièces tirées de son sac) et les coups du joueur plateau, sans sa
+On y choisit aussi le coup de l'IA, parmi les lignes de sa réflexion ou tous ses coups. On saisit les pioches de l'IA (pièces tirées de son sac) et les coups du joueur plateau, sans sa
 main : ses coups sont « libres » (toute pièce qu'il pourrait avoir) et sa main reste fictive.
 L'historique est alors une suite d'étapes (coup concret, pioches saisies de l'IA).
 
@@ -21,7 +25,7 @@ depuis sa position de départ (position initiale ou position de l'éditeur).
 
 Information cachée : face à une IA, la main de l'IA et ses pièces jouées face cachée sont
 masquées (sauf « mains visibles » ou partie terminée) ; l'analyse n'utilise alors que
-l'information du joueur humain.
+l'information du joueur au trait (au tour de l'IA, sa réflexion révèle donc ses intentions).
 """
 from __future__ import annotations
 
@@ -58,9 +62,6 @@ _journal = logging.getLogger(__name__)
 # armées toutes faites du mode libre (livret p.5 et p.14-15)
 MODELES_ARMEES = {"Première partie": FIRST_GAME, "Gaugamèles": BATTLES["gaugameles"],
                   "Bannockburn": BATTLES["bannockburn"], "Crécy": BATTLES["crecy"]}
-NIVEAUX = {64: "Rapide", 200: "Normal", 800: "Fort", 3200: "Très fort"}
-# réflexion au temps : l'IA cherche pendant cette durée (recherche progressive), en secondes
-DUREES = {5: "5 s", 15: "15 s", 30: "30 s", 60: "1 min"}
 
 
 # ------------------------------------------------------------------ modèles
@@ -106,10 +107,8 @@ def _modele_valide(chemin: str | None) -> str | None:
 
 # ------------------------------------------------------------------ sessions
 class Joueur(BaseModel):
-    type: str = "humain"            # humain | ia
-    niveau: int = 200               # simulations par décision
-    duree: float | None = None      # sinon : secondes de réflexion par décision
-    modele: str | None = None
+    type: str = "humain"            # humain | ia (les anciens champs niveau, duree sont ignorés)
+    modele: str | None = None       # IA : modèle de sa réflexion (None : meilleur modèle)
 
 
 class Nouvelle(BaseModel):
@@ -158,7 +157,6 @@ class Session:
         self.attente: dict | None = None    # hybride : coup en attente des pioches de l'IA
         self.version = 0
         self.lock = threading.Lock()
-        self.bots: dict[int, object] = {}
         self.regler(joueurs, tolerant)
         self._depart = depart.copy()
         self.initial: list[str] | None = None   # hybride : première main de l'IA, saisie
@@ -179,8 +177,8 @@ class Session:
         return g
 
     def regler(self, joueurs: list[Joueur], tolerant: bool = False) -> None:
-        """Joueurs et bots IA. `tolerant` (partie relue de l'historique) : une IA impossible à
-        recréer (modèle disparu, PyTorch absent) laisse la partie consultable, sans bot."""
+        """Joueurs ; modèle de chaque IA. `tolerant` (partie relue de l'historique) : une IA
+        impossible à recréer (modèle disparu, PyTorch absent) laisse la partie consultable."""
         if len(joueurs) != 2 or any(j.type not in ("humain", "ia") for j in joueurs):
             raise HTTPException(400, "Deux joueurs attendus, humains ou IA")
         if self.hybride:
@@ -193,41 +191,31 @@ class Session:
         ia = [j for j in joueurs if j.type == "ia"]
         if ia and not torch_present() and not tolerant:
             raise HTTPException(400, "IA indisponible : PyTorch n'est pas installé (image Docker « ia »)")
-        bots = {}
-        for i, j in enumerate(joueurs):
-            if j.type != "ia":
-                continue
-            j.niveau = max(16, min(3200, j.niveau))
-            if j.duree is not None:
-                j.duree = max(0.5, min(600.0, float(j.duree)))
+        for j in ia if torch_present() else []:   # sans PyTorch (partie relue) : consultable seulement
             try:
-                if not torch_present():
-                    raise HTTPException(400, "PyTorch absent")
-                try:
-                    j.modele = _modele_valide(j.modele)
-                except HTTPException:
-                    if not tolerant:
-                        raise
-                    j.modele = None               # modèle disparu : meilleur modèle actuel
-                ancien = self.bots.get(i)
-                if ancien is not None and getattr(ancien, "_spec", None) == (j.niveau, j.duree, j.modele):
-                    bots[i] = ancien
-                    continue
-                from ..bots.neural import NeuralBot
-                try:
-                    b = NeuralBot(modele=j.modele, simulations=j.niveau, temps=j.duree, seed=i)
-                except (FileNotFoundError, ValueError) as e:
-                    raise HTTPException(400, f"IA indisponible : {e}")
-                b._spec = (j.niveau, j.duree, j.modele)
-                bots[i] = b
+                j.modele = _modele_valide(j.modele)
             except HTTPException:
                 if not tolerant:
                     raise
+                j.modele = None                   # modèle disparu : meilleur modèle actuel
         self.joueurs = joueurs
-        self.bots = bots
 
     def nom(self, j: Joueur) -> str:
-        return "Joueur plateau" if self.hybride and j.type == "humain" else nom_joueur(j)
+        if self.hybride:
+            m = _nom_modele(j.modele) if j.type == "ia" else None
+            return "Joueur plateau" if j.type == "humain" else "IA conseillère" + (f" — {m}" if m else "")
+        return nom_joueur(j)
+
+    def choisit(self, p: int) -> bool:
+        """Les décisions de p sont choisies à l'écran : un humain, et en hybride les deux camps (on
+        choisit les coups de l'IA, aidé de l'analyse ; elle ne joue jamais seule)."""
+        return self.hybride or self.joueurs[p].type == "humain"
+
+    def coups(self, g: Game) -> list[Action]:
+        """Décisions proposées au joueur au trait ; hybride : coups libres du joueur plateau."""
+        if self.hybride and g.to_move == self.plateau:
+            return coups_libres(g, g.to_move)
+        return g.legal_actions()
 
     def _entetes(self) -> dict:
         noms = [self.nom(j) for j in self.joueurs]
@@ -471,14 +459,15 @@ def _decrire(g: Game, a: Action) -> str:
 SESSIONS: dict[str, Session] = {}
 
 
+def _nom_modele(chemin: str | None) -> str | None:
+    return next((x["nom"] for x in modeles() if x["chemin"] == chemin), None) if chemin else None
+
+
 def nom_joueur(j: Joueur) -> str:
     if j.type == "humain":
         return "Humain"
-    niveau = NIVEAUX.get(j.niveau, f"{j.niveau} simulations")
-    if j.duree is not None:
-        niveau = DUREES.get(j.duree, f"{j.duree:g} s") + " par coup"
-    m = next((x["nom"] for x in modeles() if x["chemin"] == j.modele), None) if j.modele else None
-    return f"IA {niveau.lower()}" + (f" — {m}" if m else "")
+    m = _nom_modele(j.modele)
+    return "IA entraînée" + (f" — {m}" if m else "")
 
 
 def session(gid: str) -> Session:
@@ -529,16 +518,16 @@ def etat(s: Session, depuis: int = 0, version: int = -1) -> dict:
     tm = g.to_move
     requis = s.requis() if s.hybride else None
     libre = not g.done and requis is None
-    humain = libre and s.joueurs[tm].type == "humain"
+    humain = libre and s.choisit(tm)
+    cache = s.hybride and tm == s.plateau     # main du joueur plateau : inconnue de l'écran
     legal = []
     if humain:
-        coups = coups_libres(g, tm) if s.hybride else g.legal_actions()
-        for k, a in enumerate(coups):
+        for k, a in enumerate(s.coups(g)):
             legal.append({"i": k, "n": action_str(g, a, hidden=False), "d": _decrire(g, a),
                           "coin": a.coin, "kind": a.kind, "cells": list(a.cells)})
     moine = bool(humain and g.pending and g.pending[-1].kind == "priest")
     attente = g.pending_label() if g.pending and not g.done else ""
-    if moine and s.hybride:
+    if moine and cache:
         attente = "Moine soldat : pièce piochée inconnue, choisissez celle qu'il a jouée"
     out = {
         "id": s.id, "version": s.version, "debut": debut, "n": len(imgs),
@@ -546,14 +535,14 @@ def etat(s: Session, depuis: int = 0, version: int = -1) -> dict:
         "joueurs": [dict(j.model_dump(), nom=s.nom(j)) for j in s.joueurs],
         "trait": tm, "humain": humain, "ia": libre and not humain,
         "legal": legal, "attente": attente,
-        "piece_attente": g.pending[-1].coin if moine and not s.hybride else None,
+        "piece_attente": g.pending[-1].coin if moine and not cache else None,
         "fini": g.done, "resultat": g.result_label(), "edite": s.edite, "mise": s.mise,
         "mains_visibles": s.mains_visibles, "masques": sorted(masques),
         "hybride": {"ia": s.ia, "plateau": s.plateau} if s.hybride else None,
         "tirage": requis,
         "apercu": _masquer(ap, masques) if requis and (ap := s.apercu()) is not None else None,
         # hybride : pièces que le joueur plateau pourrait jouer (information publique)
-        "possibles": dict(pieces_possibles(g, tm)) if humain and s.hybride and not g.in_draft
+        "possibles": dict(pieces_possibles(g, tm)) if humain and cache and not g.in_draft
         and (not g.pending or moine) else None,
     }
     if g.in_draft:
@@ -575,8 +564,7 @@ def regles():
         "departs": [[g.spec.names[g.spec.index[n]] for n in l] for l in g.spec.starts],
         "unites": {u: {"nom": d.name, "pieces": d.count, "max": d.max_units, "tactique": d.tactic,
                        "capacite": d.ability} for u, d in sorted(UNITS.items())},
-        "premiere": FIRST_GAME, "armees": MODELES_ARMEES, "draft": DRAFT_POOL["2J"], "niveaux": NIVEAUX,
-        "durees": DUREES,
+        "premiere": FIRST_GAME, "armees": MODELES_ARMEES, "draft": DRAFT_POOL["2J"],
     }
 
 
@@ -681,13 +669,13 @@ def jouer(gid: str, req: Jouer, depuis: int = 0, version: int = -1):
             raise HTTPException(400, "La partie est terminée")
         if s.hybride and s.requis():
             raise HTTPException(400, "Saisissez d'abord la pioche de l'IA")
-        if s.joueurs[g.to_move].type != "humain":
+        if not s.choisit(g.to_move):
             raise HTTPException(400, "C'est au tour de l'IA")
-        legal = coups_libres(g, g.to_move) if s.hybride else g.legal_actions()
+        legal = s.coups(g)
         if not 0 <= req.index < len(legal):
             raise HTTPException(400, "Coup inconnu (la position a changé ?)")
         a = legal[req.index]
-        if s.hybride:
+        if s.hybride and g.to_move == s.plateau:
             a = concretiser(g.copy(), g.to_move, a)   # pièce fictive, choisie sans toucher la partie
         s.jouer_etape(a)
         s.enregistrer()
@@ -696,16 +684,21 @@ def jouer(gid: str, req: Jouer, depuis: int = 0, version: int = -1):
 
 @router.post("/{gid}/ia")
 def coup_ia(gid: str, depuis: int = 0, version: int = -1):
-    """L'IA au trait joue une décision (le navigateur rappelle tant que l'IA a le trait)."""
+    """L'IA au trait joue maintenant (l'utilisateur décide quand) : le premier coup de sa réflexion
+    sur cette position, telle qu'elle en est ; sans réflexion, une courte recherche."""
     s = session(gid)
     with s.lock:
         g = s.game
-        if not g.done and s.joueurs[g.to_move].type == "ia" and not (s.hybride and s.requis()):
-            if g.to_move not in s.bots:
-                raise HTTPException(400, "IA indisponible sur ce serveur : la partie reste consultable")
-            _arreter_analyse()      # une analyse en cours prendrait la moitié du temps de réflexion de l'IA
-            s.jouer_etape(s.bots[g.to_move].choose(g))
-            s.enregistrer()
+        if g.done or s.joueurs[g.to_move].type != "ia" or (s.hybride and s.requis()):
+            return etat(s, depuis, version)
+        if not torch_present():
+            raise HTTPException(400, "IA indisponible sur ce serveur : la partie reste consultable")
+        a = _REFLEXION.get(_cle(s, len(s.actions)))
+        _arreter_analyse()          # la réflexion sur cette position est finie
+        if a is None or a not in g.legal_actions():
+            a = _reflexion_courte(s, g)
+        s.jouer_etape(a)
+        s.enregistrer()
         return etat(s, depuis, version)
 
 
@@ -748,14 +741,14 @@ def revenir(gid: str, req: Revenir):
 
 @router.post("/{gid}/annuler")
 def annuler(gid: str):
-    """Annule le dernier coup humain (et les réponses de l'IA qui ont suivi)."""
+    """Annule le dernier coup humain (et les réponses de l'IA qui ont suivi). Hybride : le dernier
+    coup saisi, de l'un ou l'autre camp, ou le coup en attente de la pioche de l'IA."""
     s = session(gid)
     with s.lock:
         if s.attente is not None:
-            att, s.attente = s.attente, None
-            if att["joueur"] != s.ia:           # coup du joueur plateau pas encore validé : abandonné
-                s.enregistrer()
-                return etat(s)
+            s.attente = None                     # coup pas encore validé : abandonné
+            s.enregistrer()
+            return etat(s)
         if s.hybride and not s.actions and s.initial:
             s.recommencer_pioche()               # première main de l'IA à saisir de nouveau
             s.enregistrer()
@@ -763,7 +756,7 @@ def annuler(gid: str):
         g = s.depart()
         dernier = None
         for k, (a, t) in enumerate(zip(s.actions, s.tirages)):
-            if s.joueurs[g.to_move].type == "humain" and g.turn_start:
+            if s.choisit(g.to_move) and g.turn_start:
                 dernier = k
             s._preparer(g, a, t)
             g.apply(a)
@@ -822,6 +815,10 @@ _EN_COURS: "_Travail | None" = None
 _EN_COURS_VERROU = threading.Lock()
 MAINS_ANALYSE = 4        # hybride : mains possibles du joueur plateau moyennées par l'analyse
 SIMS_PAR_MAIN = 256      # hybride, analyse progressive : simulations par main possible
+# Réflexion de l'IA : premier coup de la dernière analyse de chaque position (partie, version,
+# décisions jouées), celui que l'IA joue quand on le lui demande.
+_REFLEXION: dict[tuple, Action] = {}
+SIMS_SANS_REFLEXION = 200    # l'IA joue sans avoir réfléchi à la position : courte recherche
 
 
 def _analyste(modele: str | None):
@@ -833,6 +830,39 @@ def _analyste(modele: str | None):
         _ANALYSTE.clear()
         _ANALYSTE[cle] = bot_analyse(400, chemin)
     return _ANALYSTE[cle]
+
+
+def _bot(modele: str | None):
+    try:
+        return _analyste(modele)
+    except (FileNotFoundError, ImportError) as e:
+        raise HTTPException(400, f"IA indisponible : {e}")
+
+
+def _cle(s: Session, n: int) -> tuple:
+    """Position après n décisions ; tout retour en arrière change la version de la session."""
+    return s.id, s.version, n
+
+
+def _retenir(cle: tuple, a: Action) -> None:
+    _REFLEXION[cle] = a
+    while len(_REFLEXION) > 64:
+        _REFLEXION.pop(next(iter(_REFLEXION)))
+
+
+def _reflexion_courte(s: Session, g: Game) -> Action:
+    """Coup de l'IA au trait sans réflexion préalable : premier coup d'une courte analyse, avec sa
+    seule information et son modèle (sous s.lock)."""
+    from ..ia.analyse import analyser
+    legal = g.legal_actions()
+    if len(legal) == 1:
+        return legal[0]
+    p = g.to_move
+    bot = _bot(_modele_valide(s.joueurs[p].modele))
+    with _ANALYSTE_VERROU:
+        bot.simulations = SIMS_SANS_REFLEXION
+        r = analyser(g.copy(), bot, top=1, observateur=p)
+    return r["coups"][0]["action"]
 
 
 class _Travail:
@@ -884,7 +914,10 @@ def _lancer(fonction) -> _Travail:
 
 def _preparer(gid: str, pos: int | None, modele: str | None) -> tuple[dict | None, dict]:
     """Position à analyser. Renvoie (réponse immédiate, None) si aucune recherche n'est nécessaire
-    (partie finie, IA au trait, réseau absent), sinon (None, contexte de la recherche)."""
+    (partie finie, réseau absent), sinon (None, contexte de la recherche).
+
+    L'IA au trait : c'est sa réflexion, avec sa seule information et son modèle ; son premier coup
+    est celui qu'elle joue quand on le lui demande (_REFLEXION)."""
     from ..score import Solveur, appreciation, bastions, texte_mat, texte_score
     s = session(gid)
     with s.lock:
@@ -892,17 +925,17 @@ def _preparer(gid: str, pos: int | None, modele: str | None) -> tuple[dict | Non
         g = s.jeu_a(n)
         masques = set() if g.done else s.masques()
         joue = s.actions[n] if n < len(s.actions) else None
+        ia_trait = s.joueurs[g.to_move].type == "ia"
+        if modele is None and (ia_trait or s.hybride):
+            modele = s.joueurs[g.to_move if ia_trait else s.ia].modele
+        cle = _cle(s, n)
     base = {"pos": n, "trait": g.to_move, "bastions": bastions(g)}
     if g.done:
         return dict(base, fini=g.result_label(), texte=g.result_label().replace("1/2-1/2", "½-½"), coups=[],
                     score=0.0 if g.winner is None else (99.9 if g.winner == 0 else -99.9),
                     gain_or=0.5 if g.winner is None else float(g.winner == 0)), {}
-    vue_ia = s.hybride and g.to_move in masques
-    if g.to_move in masques and not vue_ia:
-        base["coups"] = []
-        return dict(base, indisponible="L'IA réfléchit : l'analyse reprend à votre tour "
-                                       "(elle n'utilise que ce que vous savez)."), {}
-    observateur = s.ia if vue_ia else (g.to_move if masques else None)
+    vue_ia = s.hybride and g.to_move == s.plateau
+    observateur = s.ia if vue_ia else (g.to_move if ia_trait or masques else None)
     if observateur is not None:
         base["observateur"] = observateur
     modele = _modele_valide(modele)
@@ -922,7 +955,7 @@ def _preparer(gid: str, pos: int | None, modele: str | None) -> tuple[dict | Non
     if joue is not None and s.hybride and g.to_move == s.plateau:
         joue = None
     return None, {"g": g, "base": base, "observateur": observateur, "vue_ia": vue_ia, "ia": s.hybride and s.ia,
-                  "modele": modele, "joue": joue}
+                  "modele": modele, "joue": joue, "cle": cle}
 
 
 def _completer(g: Game, r: dict, base: dict) -> dict:
@@ -942,17 +975,20 @@ def _completer(g: Game, r: dict, base: dict) -> dict:
 def _analyser(ctx: dict, limite=None, suivi=None, simulations: int = 400) -> dict:
     """Recherche (sous _ANALYSTE_VERROU) ; `limite` : recherche progressive, sinon `simulations`."""
     from ..ia.analyse import analyser
-    try:
-        bot = _analyste(ctx["modele"])
-    except (FileNotFoundError, ImportError) as e:
-        raise HTTPException(400, f"IA indisponible : {e}")
+    bot = _bot(ctx["modele"])
     g, base = ctx["g"], ctx["base"]
     if ctx["vue_ia"]:
         return _analyse_vue_ia(g, ctx["ia"], base, bot, limite, suivi, simulations)
     bot.simulations = simulations
-    rappel = (lambda r: suivi(_completer(g, r, base))) if suivi is not None else None
+
+    def retenir(r: dict) -> dict:
+        if r["coups"]:
+            _retenir(ctx["cle"], r["coups"][0]["action"])   # coup que l'IA jouerait maintenant
+        return _completer(g, r, base)
+
+    rappel = (lambda r: suivi(retenir(r))) if suivi is not None else None
     r = analyser(g, bot, top=6, observateur=ctx["observateur"], limite=limite, suivi=rappel, joue=ctx["joue"])
-    return _completer(g, r, base)
+    return retenir(r)
 
 
 @router.post("/{gid}/analyse")

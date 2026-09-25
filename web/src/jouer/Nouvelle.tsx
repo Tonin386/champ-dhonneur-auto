@@ -3,12 +3,11 @@ import { EQUIPE } from "../jeu";
 import { useJeu, type Config } from "./store";
 import type { InfoIA, JoueurCfg, Regles } from "./types";
 
-/** Choix d'un joueur : Humain ou IA entraînée (niveau : simulations ou secondes par décision, modèle). */
-export function ChoixJoueur({ equipe, j, info, onChange, niveaux, durees = {}, hybride }: {
-  equipe: number; j: JoueurCfg; info: InfoIA | null; onChange: (j: JoueurCfg) => void; niveaux: Record<string, string>;
-  /** réflexion au temps : secondes → libellé */
-  durees?: Record<string, string>;
-  /** partie sur un vrai plateau : « Humain » désigne le joueur plateau */
+/** Choix d'un joueur : Humain ou IA entraînée (modèle de sa réflexion). L'IA ne joue jamais d'elle-même :
+ *  elle réfléchit sans limite et c'est vous qui décidez quand elle joue. */
+export function ChoixJoueur({ equipe, j, info, onChange, hybride }: {
+  equipe: number; j: JoueurCfg; info: InfoIA | null; onChange: (j: JoueurCfg) => void;
+  /** partie sur un vrai plateau : « Humain » désigne le joueur plateau ; on choisit aussi le coup de l'IA */
   hybride?: boolean;
 }) {
   const iaOk = !!info?.disponible;
@@ -19,25 +18,12 @@ export function ChoixJoueur({ equipe, j, info, onChange, niveaux, durees = {}, h
         <button type="button" role="radio" aria-checked={j.type === "humain"} className={j.type === "humain" ? "on" : ""}
           onClick={() => onChange({ ...j, type: "humain" })}>{hybride ? "Joueur plateau" : "Humain"}</button>
         <button type="button" role="radio" aria-checked={j.type === "ia"} className={j.type === "ia" ? "on" : ""} disabled={!iaOk}
-          title={iaOk ? "Réseau entraîné par auto-jeu" : info?.raison} onClick={() => onChange({ ...j, type: "ia" })}>IA entraînée</button>
+          title={iaOk ? (hybride ? "Vous choisissez ses coups, conseillé par sa réflexion"
+            : "Réseau entraîné par auto-jeu : il réfléchit à son tour, vous décidez quand il joue") : info?.raison}
+          onClick={() => onChange({ ...j, type: "ia" })}>{hybride ? "IA conseillère" : "IA entraînée"}</button>
       </div>
       {j.type === "ia" && iaOk && (
         <div className="options-ia">
-          <label>Niveau
-            <select value={j.duree ? `t:${j.duree}` : `s:${j.niveau}`} onChange={e => {
-              const [t, v] = e.target.value.split(":");
-              onChange(t === "t" ? { ...j, duree: +v } : { ...j, niveau: +v, duree: null });
-            }}>
-              <optgroup label="Simulations par coup">
-                {Object.entries(niveaux).map(([v, l]) => <option key={v} value={`s:${v}`}>{l} ({v} simulations)</option>)}
-              </optgroup>
-              {Object.keys(durees).length > 0 && (
-                <optgroup label="Réflexion au temps">
-                  {Object.entries(durees).map(([v, l]) => <option key={v} value={`t:${v}`}>{l} par coup</option>)}
-                </optgroup>
-              )}
-            </select>
-          </label>
           <label>Modèle
             <select value={j.modele ?? ""} onChange={e => onChange({ ...j, modele: e.target.value || null })}>
               <option value="">Meilleur modèle (par défaut)</option>
@@ -241,21 +227,26 @@ export function DialogueNouvelle() {
             <button type="button" role="radio" aria-checked={!c.hybride} className={c.hybride ? "" : "on"}
               onClick={() => setC({ ...c, hybride: false })}>À l'écran</button>
             <button type="button" role="radio" aria-checked={c.hybride} className={c.hybride ? "on" : ""} disabled={!hybrideOk}
-              title={hybrideOk ? "Partie sur un vrai plateau : l'écran joue l'IA" : "Il faut une IA entraînée"}
+              title={hybrideOk ? "Partie sur un vrai plateau : vous jouez le camp de l'IA, conseillé par son analyse" : "Il faut une IA entraînée"}
               onClick={() => setC({ ...c, hybride: true, joueurs: unSeulIA(c.joueurs, true, -1) })}>Sur plateau réel (hybride)</button>
           </div>
         </div>
         {c.hybride && (
           <p className="explication">
-            La partie se joue sur la table ; l'écran joue l'IA. Vous saisissez les pièces tirées du sac de l'IA et les
-            coups du joueur plateau (jamais sa main), puis vous reproduisez sur la table les coups de l'IA.
+            La partie se joue sur la table. À son tour, l'IA réfléchit et affiche ses lignes, comme un moteur d'échecs ;
+            vous choisissez son coup (une de ses lignes, ou « Jouer son meilleur coup ») et le reproduisez sur la table.
+            Vous saisissez aussi les pièces tirées du sac de l'IA et les coups du joueur plateau (jamais sa main).
           </p>
         )}
         <div className="deux-joueurs">
           {c.joueurs.map((j, k) => (
-            <ChoixJoueur key={k} equipe={k} j={j} info={info} onChange={joueur(k)} niveaux={regles?.niveaux ?? {}} durees={regles?.durees} hybride={c.hybride} />
+            <ChoixJoueur key={k} equipe={k} j={j} info={info} onChange={joueur(k)} hybride={c.hybride} />
           ))}
         </div>
+        {!c.hybride && c.joueurs.some(j => j.type === "ia") && (
+          <p className="remarque">L'IA ne joue jamais d'elle-même : à son tour, elle réfléchit sans limite en affichant ses
+            lignes, et joue le premier coup de sa réflexion quand vous cliquez « L'IA joue maintenant » (Espace).</p>
+        )}
         {!info?.disponible && info?.raison && <p className="remarque">IA indisponible : {info.raison}.</p>}
         <div className="onglets onglets-mise" role="tablist" aria-label="Mise en place">
           {ONGLETS.map(([v, l]) => (

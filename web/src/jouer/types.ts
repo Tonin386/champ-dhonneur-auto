@@ -3,9 +3,7 @@ import type { Case, Decor, Image } from "../types";
 
 export interface JoueurCfg {
   type: "humain" | "ia";
-  niveau: number; // simulations par décision
-  duree?: number | null; // sinon : secondes de réflexion par décision
-  modele: string | null;
+  modele: string | null; // IA : modèle de sa réflexion (null : meilleur modèle)
   nom?: string;
 }
 
@@ -40,7 +38,8 @@ export interface EtatServeur {
   mise: Mise;
   mains_visibles: boolean;
   masques: number[];
-  /** partie hybride (plateau réel) : sièges de l'IA et du joueur plateau */
+  /** partie hybride (plateau réel) : sièges de l'IA et du joueur plateau ; le coup de l'IA se
+   *  choisit aussi à l'écran (`humain` vrai à son tour) */
   hybride: { ia: number; plateau: number } | null;
   /** partie hybride : pioche de l'IA à saisir */
   tirage: Tirage | null;
@@ -77,6 +76,7 @@ export interface CoupAnalyse {
   score: number;
   texte: string;
   ligne: string[];
+  equipes?: number[]; // équipe qui joue chaque coup de la ligne (0 Or, 1 Argent)
   cases: number[];
   i: number; // index du coup parmi les coups légaux
 }
@@ -128,8 +128,6 @@ export interface Regles {
   premiere: string[][];
   armees: Record<string, string[][]>; // armées toutes faites du mode libre
   draft: number; // nombre de cartes du draft
-  niveaux: Record<string, string>;
-  durees: Record<string, string>; // réflexion au temps (secondes)
 }
 
 export interface InfoIA {

@@ -64,6 +64,10 @@ def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int
     ordre = [best] + [i for i in ordre if i != best]
     total = max(float(res.visites.sum()), 1.0)
 
+    def ligne(a) -> dict:
+        coups, equipes = _ligne(game, a, racine, observateur, profondeur)
+        return {"ligne": coups, "equipes": equipes}
+
     def coup(i: int) -> dict:
         a = legal[i]
         v_or = sign * float(res.q[i])
@@ -72,7 +76,7 @@ def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int
                 "probabilite": round(float(res.politique[i]), 3), "q": round(float(res.q[i]), 3),
                 "visites": int(res.visites[i]), "part": round(float(res.visites[i]) / total, 3),
                 "score": round(sc, 1), "texte": texte_score(sc) if res.visites[i] > 0 else "—", "action": a,
-                "ligne": _ligne(game, a, racine, observateur, profondeur)}
+                **ligne(a)}
 
     coups = [coup(i) for i in ordre[:top]]
     if mat and mat["action"] is not None:
@@ -82,7 +86,7 @@ def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int
         if c0 is None:
             c0 = coup(legal.index(a)) if a in legal else {
                 "coup": action_str(game, a), "description": describe(game, a), "probabilite": 0.0, "q": None,
-                "visites": 0, "part": 0.0, "action": a, "ligne": _ligne(game, a, racine, observateur, profondeur)}
+                "visites": 0, "part": 0.0, "action": a, **ligne(a)}
         coups = [c0] + [c for c in coups if c is not c0][:top - 1]
         c0["score"] = 99.9 if mat["equipe"] == 0 else -99.9
         c0["texte"] = texte_mat(mat["equipe"], mat["coups"])
@@ -118,13 +122,15 @@ def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int
     return out
 
 
-def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> list[str]:
-    """Suite la plus explorée par la recherche après a0, groupée en coups (notation publique)."""
+def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> tuple[list[str], list[int]]:
+    """Suite la plus explorée par la recherche après a0, groupée en coups (notation publique), et
+    l'équipe qui joue chacun de ces coups (0 Or, 1 Argent)."""
     if racine is None or a0 not in racine.enfants:
-        return [action_str(game, a0, hidden=False)]
+        return [action_str(game, a0, hidden=False)], [game.team(game.to_move)]
     from ..score import _mettre_en_main
     g = game.copy()
     coups: list[str] = []
+    equipes: list[int] = []
     node, a = racine, a0
     for _ in range(profondeur):
         p = g.to_move
@@ -136,6 +142,7 @@ def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> 
         s = action_str(g, a, hidden=False)
         if principal or not coups:
             coups.append(s)
+            equipes.append(g.team(p))
         elif a.kind == "rg_reserve":
             coups[-1] += "(R)"
         elif a.kind not in ("skip", "rg_unit"):
@@ -147,7 +154,7 @@ def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> 
         a, suivant = max(node.enfants.items(), key=lambda kv: kv[1].n)
         if suivant.n < 2:
             break
-    return coups
+    return coups, equipes
 
 
 def texte(analyse: dict) -> str:

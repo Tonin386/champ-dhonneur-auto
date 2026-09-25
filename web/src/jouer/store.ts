@@ -18,7 +18,7 @@ export interface Config {
 }
 
 export const CONFIG_DEFAUT: Config = {
-  joueurs: [{ type: "humain", niveau: 200, modele: null }, { type: "ia", niveau: 200, modele: null }],
+  joueurs: [{ type: "humain", modele: null }, { type: "ia", modele: null }],
   mode: "draft",
   cartes: null,
   armees: [["H", "P", "S", "X"], ["A", "C", "E", "L"]],
@@ -28,19 +28,16 @@ export const CONFIG_DEFAUT: Config = {
   hybride: false,
 };
 
-/** Configuration enregistrée (les anciennes clés, comme « unites », sont oubliées). */
+/** Configuration enregistrée (les anciennes clés, comme « unites » ou le niveau de l'IA, sont oubliées). */
 function lireConfig(): Config {
   const c = lire("champ.jouer.config", CONFIG_DEFAUT) as Config & { unites?: string };
   const { unites: _, ...reste } = c;
   if (!["draft", "libre"].includes(reste.mode)) reste.mode = "draft";
+  reste.joueurs = reste.joueurs.map(j => ({ type: j.type, modele: j.modele ?? null }));
   return reste;
 }
 
 export type Mode = "jeu" | "editeur";
-
-/** Quand l'IA joue : dès que c'est son tour, seulement quand la position actuelle est affichée,
- *  ou sur demande (bouton « Coup de l'IA »). */
-export type Pilotage = "auto" | "affichage" | "demande";
 
 /** Partie de l'historique (résumé envoyé par /api/jeu/parties) */
 export interface ResumePartie {
@@ -57,7 +54,7 @@ export interface ResumePartie {
   decisions: number;
 }
 
-interface EtatJeu {
+export interface EtatJeu {
   regles: Regles | null;
   infoIA: InfoIA | null;
   config: Config;
@@ -90,8 +87,6 @@ interface EtatJeu {
   retourne: boolean; // plateau retourné : Argent en bas
   pos: number; // image affichée
   occupe: boolean; // requête de jeu en cours
-  lecture: boolean; // IA contre IA : lecture automatique
-  vitesse: number; // ms entre deux décisions de l'IA
   piece: string | null; // pièce de la main choisie
   caseChoisie: number | null;
   survol: number[] | null; // cases du coup survolé dans une liste
@@ -100,9 +95,6 @@ interface EtatJeu {
   onglet: "coups" | "analyse";
   /** aides à la décision affichées (partie avec au moins un humain ; masquées par défaut) */
   aides: boolean;
-  pilotage: Pilotage;
-  /** l'IA a échoué à jouer : le pilote s'arrête jusqu'à la prochaine action */
-  panne: boolean;
 
   // historique
   historique: boolean; // fenêtre ouverte
@@ -124,6 +116,7 @@ interface EtatJeu {
   demarrer(): Promise<void>;
   nouvelle(c?: Partial<Config>, position?: Position): Promise<boolean>;
   jouer(i: number): Promise<void>;
+  /** l'IA au trait joue maintenant le premier coup de sa réflexion (c'est l'utilisateur qui décide quand) */
   coupIA(): Promise<void>;
   revenir(pos: number): Promise<void>;
   annuler(): Promise<void>;
@@ -143,7 +136,6 @@ interface EtatJeu {
   ouvrirEditeur(): Promise<void>;
   setEditeur(p: Position | null): void;
   setErreur(e: string | null): void;
-  setPilotage(p: Pilotage): void;
   basculerRetourne(): void;
   chargerParties(): Promise<void>;
   ouvrirPartie(id: string): Promise<boolean>;
@@ -177,13 +169,13 @@ function ecrire(cle: string, v: unknown) {
   }
 }
 
-export const LIMITE_DEFAUT: LimiteAnalyse = { type: "duree", valeur: 3 };
+/** Réflexion de l'IA et analyse : sans limite par défaut, jusqu'à ce que l'IA joue ou qu'on l'arrête. */
+export const LIMITE_DEFAUT: LimiteAnalyse = { type: "infini", valeur: 0 };
 
-const prefs = lire("champ.jouer", {
-  analyse: false, limite: LIMITE_DEFAUT, fleche: true, vitesse: 700, pilotage: "auto" as Pilotage, retourne: false,
-});
+const prefs = lire("champ.jouer", { analyse: false, limite: LIMITE_DEFAUT, fleche: true, retourne: false, v: 0 });
 
-if (!["duree", "profondeur", "simulations", "infini"].includes(prefs.limite?.type) || !(prefs.limite.valeur >= 0)) {
+// préférences d'avant la réflexion sans limite (v < 2 : 3 s par défaut) : limite remise à zéro
+if (prefs.v < 2 || !["duree", "profondeur", "simulations", "infini"].includes(prefs.limite?.type) || !(prefs.limite.valeur >= 0)) {
   prefs.limite = LIMITE_DEFAUT;
 }
 
@@ -229,15 +221,20 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     else if (e.debut < s.images.length) {
       analyses = Object.fromEntries(Object.entries(analyses).filter(([k]) => +k < e.debut));
     }
+    // onglet : pioche de l'IA à saisir → saisie ; au tour de l'IA → sa réflexion ; sinon → les coups
+    const tourIA = auTraitIA(e), tourIA0 = !nouvelle && auTraitIA(s);
+    let onglet = nouvelle ? "coups" as const : s.onglet;
+    if (e.tirage && !s.tirage) onglet = "coups";
+    if (tourIA !== tourIA0) onglet = tourIA ? "analyse" : "coups";
     set({
       id: e.id, version: e.version, decor: e.decor ?? s.decor, images,
       joueurs: e.joueurs, trait: e.trait, humain: e.humain, ia: e.ia, legal: e.legal,
       attente: e.attente, pieceAttente: e.piece_attente, conseil: e.conseil ?? null, fini: e.fini, resultat: e.resultat,
       edite: e.edite, mise: e.mise, mainsVisibles: e.mains_visibles, masques: e.masques, analyses,
       hybride: e.hybride ?? null, tirage: e.tirage ?? null, apercu: e.apercu ?? null, possibles: e.possibles ?? null,
-      ...(e.tirage && !s.tirage ? { onglet: "coups" as const } : {}),
-      // nouvelle partie : aides à la décision masquées, IA de nouveau pilotée
-      ...(nouvelle ? { aides: false, panne: false, onglet: "coups" as const } : {}),
+      onglet,
+      // nouvelle partie : aides à la décision masquées
+      ...(nouvelle ? { aides: false } : {}),
       pos: auBout || nouvelle || s.pos >= images.length ? images.length - 1 : s.pos,
       piece: null, caseChoisie: null, survol: null, occupe: false,
     });
@@ -273,8 +270,6 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     retourne: prefs.retourne,
     pos: 0,
     occupe: false,
-    lecture: true,
-    vitesse: prefs.vitesse,
     piece: null,
     caseChoisie: null,
     survol: null,
@@ -282,8 +277,6 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     dialogue: false,
     onglet: "coups",
     aides: false,
-    pilotage: prefs.pilotage,
-    panne: false,
     historique: false,
     parties: null,
     ecriture: true,
@@ -322,7 +315,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       const config = { ...get().config, ...c };
       try {
         const e = await api<EtatServeur>("/api/jeu", { ...config, position: position ?? null });
-        set({ config, mode: "jeu", editeur: null, dialogue: false, lecture: true });
+        set({ config, mode: "jeu", editeur: null, dialogue: false });
         ecrire("champ.jouer.config", config);
         recevoir(e, true);
         return true;
@@ -335,7 +328,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     jouer: async i => {
       const { id, occupe } = get();
       if (!id || occupe) return;
-      set({ occupe: true, panne: false });
+      set({ occupe: true });
       try {
         recevoir(await api<EtatServeur>(`/api/jeu/${id}/jouer?${q()}`, { index: i }));
       } catch (e) {
@@ -351,7 +344,6 @@ export const useJeu = create<EtatJeu>()((set, get) => {
         recevoir(await api<EtatServeur>(`/api/jeu/${id}/ia?${q()}`, {}));
       } catch (e) {
         erreur(e);
-        set({ lecture: false, panne: true });
       }
     },
 
@@ -361,7 +353,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       try {
         // partie terminée : la suite se joue dans une variante, l'originale reste dans l'historique
         recevoir(await api<EtatServeur>(`/api/jeu/${id}/revenir`, { pos, copie: fini }), fini);
-        set({ pos: get().images.length - 1, lecture: false, panne: false });
+        set({ pos: get().images.length - 1 });
         if (fini) set({ info: "Variante créée : la partie terminée reste intacte dans l'historique" });
       } catch (e) {
         erreur(e);
@@ -373,7 +365,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       if (!id) return;
       try {
         recevoir(await api<EtatServeur>(`/api/jeu/${id}/annuler`, {}));
-        set({ pos: get().images.length - 1, lecture: false });
+        set({ pos: get().images.length - 1 });
       } catch (e) {
         erreur(e);
       }
@@ -419,7 +411,6 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       const n = get().images.length;
       set({ pos: Math.max(0, Math.min(pos, n - 1)), piece: null, caseChoisie: null, survol: null });
     },
-    // parcourir la partie ne l'arrête pas : c'est le pilotage de l'IA qui décide (store.pilotage)
     pas: d => get().aller(get().pos + d),
 
     choisirPiece: c => set({ piece: get().piece === c ? null : c, caseChoisie: null }),
@@ -474,7 +465,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       const { id, pos } = get();
       try {
         const p = id ? await api<Position & { hasard?: string }>(`/api/jeu/${id}/position?pos=${pos}`) : null;
-        set({ editeur: p, mode: "editeur", lecture: false });
+        set({ editeur: p, mode: "editeur" });
         if (p?.hasard) set({ info: p.hasard });
       } catch (e) {
         erreur(e);
@@ -483,10 +474,6 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     setEditeur: editeur => set({ editeur }),
     basculerRetourne: () => {
       set({ retourne: !get().retourne });
-      sauverPrefs();
-    },
-    setPilotage: pilotage => {
-      set({ pilotage, panne: false });
       sauverPrefs();
     },
 
@@ -501,7 +488,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     ouvrirPartie: async id => {
       try {
         const e = await api<EtatServeur>(`/api/jeu/${id}`);
-        set({ mode: "jeu", editeur: null, historique: false, lecture: false });
+        set({ mode: "jeu", editeur: null, historique: false });
         recevoir(e, true);
         return true;
       } catch (e) {
@@ -522,20 +509,31 @@ export const useJeu = create<EtatJeu>()((set, get) => {
 
 export const sauverPrefs = () => {
   const s = useJeu.getState();
-  ecrire("champ.jouer", { analyse: s.analyse, limite: s.limite, fleche: s.fleche, vitesse: s.vitesse, pilotage: s.pilotage, retourne: s.retourne });
+  ecrire("champ.jouer", { analyse: s.analyse, limite: s.limite, fleche: s.fleche, retourne: s.retourne, v: 2 });
 };
 
 /** Image affichée ; en hybride, pendant la pioche de l'IA : la position après son coup (aperçu). */
 export const useImageAffichee = () =>
   useJeu(s => (s.apercu && s.tirage && s.pos === s.images.length - 1 ? s.apercu : s.images[s.pos]));
 
-/** Aides à la décision visibles : toujours sans joueur humain, sinon sur demande. */
-export const useAides = () => useJeu(s => s.aides || !s.joueurs.some(j => j.type === "humain"));
+/** Aides à la décision visibles : toujours sans joueur humain ou en hybride (on y choisit les coups
+ *  de l'IA, aidé de l'analyse), sinon sur demande. */
+export const aidesVisibles = (s: EtatJeu) => s.aides || s.hybride !== null || !s.joueurs.some(j => j.type === "humain");
+export const useAides = () => useJeu(aidesVisibles);
 
-/** Analyse effectivement affichée (activée et aides visibles). */
+/** L'IA a le trait (position actuelle) : elle réfléchit, et c'est vous qui décidez quand elle joue
+ *  (en hybride, vous choisissez aussi son coup). */
+export function auTraitIA(x: { ia: boolean; humain: boolean; trait: number; hybride: { ia: number } | null; tirage: Tirage | null }) {
+  return !x.tirage && (x.ia || (x.hybride !== null && x.humain && x.trait === x.hybride.ia));
+}
+export const useTourIA = () => useJeu(auTraitIA);
+
+/** Analyse effectivement affichée : activée et aides visibles ; toujours en hybride (l'analyse vue
+ *  par l'IA) et, à la position actuelle, quand l'IA a le trait (sa réflexion). */
 export const useAnalyseActive = () => {
   const aides = useAides();
   const analyse = useJeu(s => s.analyse);
   const hybride = useJeu(s => s.hybride !== null);
-  return hybride || (aides && analyse);   // hybride : l'analyse vue par l'IA est toujours affichée
+  const reflexion = useJeu(s => auTraitIA(s) && !s.fini && s.pos === s.images.length - 1);
+  return hybride || reflexion || (aides && analyse);
 };

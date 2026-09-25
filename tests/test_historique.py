@@ -4,32 +4,27 @@ import random
 import pytest
 from fastapi.testclient import TestClient
 
-from champ_dhonneur.bots import make_bot
+from champ_dhonneur.bots.neural import NeuralBot
 from champ_dhonneur.server import jeu
 from champ_dhonneur.server.app import app
 
 
-class BotFactice:
-    """Remplace le réseau (absent des tests)."""
-
-    def __init__(self, modele=None, simulations=200, seed=None, **kw):
-        self.b = make_bot("glouton", seed=seed)
-
-    def choose(self, g):
-        return self.b.choose(g)
-
-
 @pytest.fixture
 def client(monkeypatch, tmp_path):
+    """Sans réseau : l'IA joue (sur demande) le premier coup d'une courte recherche heuristique."""
     monkeypatch.setattr(jeu, "PARTIES", tmp_path / "parties")
     monkeypatch.setattr(jeu, "torch_present", lambda: True)
-    import champ_dhonneur.bots.neural as neural
-    monkeypatch.setattr(neural, "NeuralBot", BotFactice)
+    monkeypatch.setattr(jeu, "modeles", lambda: [])
+    bot = NeuralBot(heuristique=True, seed=0)
+    bot.k = None
+    monkeypatch.setattr(jeu, "_analyste", lambda modele: bot)
+    monkeypatch.setattr(jeu, "SIMS_SANS_REFLEXION", 16)
     return TestClient(app)
 
 
 def jouer(c, e, n, rng):
-    """n décisions : l'IA quand elle a le trait, sinon un coup au hasard (pioches : première pièce)."""
+    """n décisions : l'IA quand elle a le trait (on lui demande de jouer), sinon un coup au hasard
+    (pioches : première pièce)."""
     for _ in range(n):
         if e["fini"]:
             break
@@ -126,10 +121,10 @@ def test_ia_disparue_partie_consultable(client, monkeypatch):
 
 
 def test_analyse_indisponible_toujours_avec_coups(client):
-    """Régression : l'analyse au trait de l'IA renvoyait une réponse sans « coups », ce qui
-    faisait planter la page (« Cannot read properties of undefined (reading 'length') »)."""
+    """Régression : une analyse sans réseau au trait de l'IA (sa réflexion) répond avec « coups »,
+    sinon la page plante (« Cannot read properties of undefined (reading 'length') »)."""
     e = client.post("/api/jeu", json={"mode": "libre", "premier": 1,
                                       "joueurs": [{"type": "humain"}, {"type": "ia"}]}).json()
     assert e["ia"]
     a = client.post(f"/api/jeu/{e['id']}/analyse").json()
-    assert a["indisponible"] and a["coups"] == []
+    assert a["indisponible"] and a["coups"] == [] and a["observateur"] == 1

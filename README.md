@@ -94,36 +94,40 @@ F (plein écran), 1–9 (table). Survolez le titre d'un graphique pour savoir ce
 en haut) :
 
 - **joueurs** : Humain ou IA entraînée pour chaque camp (Humain contre Humain, Humain contre IA,
-  IA contre IA), avec le niveau (simulations par décision, ou réflexion au temps : 5 s à 1 min
-  par coup) et le modèle (meilleur modèle ou une itération précise). L'IA joue d'office une
-  victoire forcée, sinon le meilleur coup de sa recherche ; face à l'IA, sa main et ses pièces jouées face cachée restent secrètes
-  (lien « révéler » dans sa colonne) ;
+  IA contre IA), avec le modèle de l'IA (meilleur modèle ou une itération précise) ; face à
+  l'IA, sa main et ses pièces jouées face cachée restent secrètes (lien « révéler » dans sa
+  colonne) ;
+- **l'IA ne joue jamais d'elle-même**, dans aucun mode : à son tour, elle **réfléchit** (onglet
+  « Réflexion de l'IA » : l'analyse de la position avec sa seule information, sans limite par
+  défaut, ses lignes affichées au fur et à mesure, comme un moteur d'échecs), et c'est vous qui
+  décidez quand elle joue : **« L'IA joue maintenant »** (Espace) lui fait jouer le premier coup
+  de sa réflexion, telle qu'elle en est (une victoire forcée d'abord). Sa réflexion révèle ses
+  intentions, donc indirectement sa main ;
 - **mise en place** (« Nouvelle partie », N) : **Draft** par défaut (mise en place avancée,
   8 cartes tirées au hasard ou choisies une à une, premier à choisir au hasard ou imposé),
   **Libre** (les deux armées de 4 unités composées à la main, ou d'après la première partie
   et les batailles historiques ; Initiative au choix) ou **Position** (l'éditeur ci-dessous) ;
-- **partie sur plateau réel (hybride)** : on joue sur la table contre l'IA. On saisit les pièces
-  tirées du sac de l'IA et les coups du joueur plateau (jamais sa main : ses coups face cachée
-  restent « pièce cachée »), puis on reproduit sur la table les coups de l'IA. L'IA ne dispose
-  que de ce qu'un joueur assis à sa place saurait ; voir [docs/HYBRIDE.md](docs/HYBRIDE.md) ;
+- **partie sur plateau réel (hybride)** : on joue sur la table le camp de l'IA : à son tour, on
+  choisit son coup (une ligne de sa réflexion, « Jouer son meilleur coup », ou une pièce puis une
+  case) avant de le reproduire sur la table. On saisit aussi les pièces tirées de son sac et les coups du joueur plateau (jamais sa
+  main : ses coups face cachée restent « pièce cachée »). L'analyse ne dispose que de ce qu'un
+  joueur assis à la place de l'IA saurait ; voir [docs/HYBRIDE.md](docs/HYBRIDE.md) ;
 - **jeu** : cliquer une pièce de la main puis une case en surbrillance, ou un coup de la liste ;
   « Annuler mon coup », parcours de la partie (← →) et « Reprendre d'ici » pour rejouer une autre
   suite (sur une partie terminée : « Variante d'ici », qui laisse l'originale intacte) ;
-- **quand l'IA joue** : dès son tour (la partie continue même si l'on s'arrête sur un coup passé
-  pour l'analyser), seulement quand la position actuelle est affichée, ou sur demande (« Coup de
-  l'IA », Espace) ;
-- **aides de jeu** : dès qu'un humain joue, les aides à la décision (évaluation, meilleurs coups
-  et flèche, victoires forcées, valeur des cartes du draft, main de l'IA) sont **masquées par
-  défaut** à chaque partie ; le bouton « Aides » de la barre du haut les affiche. Sans joueur
-  humain (IA contre IA), elles sont toujours disponibles ;
+- **aides de jeu** : dès qu'un humain joue, les aides à la décision à son tour (évaluation,
+  meilleurs coups et flèche, victoires forcées, valeur des cartes du draft, main de l'IA) sont
+  **masquées par défaut** à chaque partie ; le bouton « Aides » de la barre du haut les affiche.
+  Sans joueur humain (IA contre IA) ou en hybride, elles sont toujours disponibles ;
 - **analyse** (A) : le réseau évalue la position affichée, à tout moment de la partie, avec une
   barre d'évaluation, ses meilleurs coups et la suite qu'il attend, et une courbe de l'évaluation.
   L'analyse est progressive, comme celle d'un moteur d'échecs : elle approfondit par passes
   (profondeur, horizon en coups anticipés, simulations) et s'affiche au fur et à mesure, jusqu'à
-  une durée (1 s à 5 min), une profondeur, un nombre de simulations, ou sans limite (analyse
-  infinie, bouton « Arrêter »). Ses coups sont classés comme l'IA choisit le sien : le premier est
-  celui qu'elle jouerait. En relecture, le coup joué ensuite est évalué, avec son écart au
-  meilleur coup. Face à l'IA, l'analyse n'utilise que l'information du joueur humain ;
+  une durée (1 s à 5 min), une profondeur, un nombre de simulations, ou sans limite (par défaut :
+  analyse infinie, bouton « Arrêter »). Ses coups sont classés comme l'IA choisit le sien : le
+  premier est celui qu'elle jouerait. Chaque ligne est entière, chaque coup à la couleur du camp
+  qui le joue. En relecture, le coup joué ensuite est évalué, avec son écart au meilleur coup.
+  L'analyse n'utilise que l'information du joueur au trait ;
 - **parties** : chaque partie (dès sa première décision) est enregistrée dans `./parties`
   (`CHAMP_PARTIES`, un fichier JSON par partie) ; la fenêtre « Parties » liste les parties en
   cours et terminées, à reprendre, revoir ou supprimer. Recharger la page reprend la partie

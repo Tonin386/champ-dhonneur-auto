@@ -420,7 +420,7 @@ export function PanneauPosition() {
       )}
       <div className="deux-joueurs compact">
         {joueurs.map((j, k) => (
-          <ChoixJoueur key={k} equipe={k} j={j} info={info} niveaux={regles.niveaux} durees={regles.durees} hybride={hybride}
+          <ChoixJoueur key={k} equipe={k} j={j} info={info} hybride={hybride}
             onChange={nj => useEd.getState().set({ joueurs: unSeulIA(joueurs.map((x, i) => (i === k ? nj : x)), hybride, k) })} />
         ))}
       </div>

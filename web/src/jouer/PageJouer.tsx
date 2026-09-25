@@ -3,11 +3,11 @@ import { Chronique } from "../components/Chronique";
 import { Joueur, Piece } from "../components/Joueur";
 import { Plateau } from "../components/Plateau";
 import { EQUIPE, NOMS } from "../jeu";
-import { Analyse, BarreEval, CourbeEval, libelleScore } from "./Analyse";
+import { Analyse, BarreEval, CourbeEval, JouerMaintenant, libelleScore } from "./Analyse";
 import { Editeur, PanneauPosition } from "./Editeur";
 import { DialogueNouvelle } from "./Nouvelle";
 import { DialogueParties } from "./Parties";
-import { sauverPrefs, useAides, useAnalyseActive, useImageAffichee, useJeu, type Pilotage } from "./store";
+import { auTraitIA, aidesVisibles, useAides, useAnalyseActive, useImageAffichee, useJeu, useTourIA } from "./store";
 import type { Legal } from "./types";
 
 const ATTAQUES = new Set(["attack"]);
@@ -30,32 +30,9 @@ export function useCoups() {
   }, [humain, legal, pos, n, piece, caseChoisie]);
 }
 
-/** L'IA joue quand elle a le trait, selon le pilotage choisi (IA contre IA : pas en pause). */
-function usePilote() {
-  const ia = useJeu(s => s.ia);
-  const n = useJeu(s => s.images.length);
-  const occupe = useJeu(s => s.occupe);
-  const lecture = useJeu(s => s.lecture);
-  const vitesse = useJeu(s => s.vitesse);
-  const mode = useJeu(s => s.mode);
-  const joueurs = useJeu(s => s.joueurs);
-  const pos = useJeu(s => s.pos);
-  const pilotage = useJeu(s => s.pilotage);
-  const panne = useJeu(s => s.panne);
-  useEffect(() => {
-    if (!ia || occupe || panne || mode !== "jeu" || pilotage === "demande") return;
-    const seule = joueurs.every(j => j.type === "ia");
-    if (seule && !lecture) return;
-    // « affichage » : l'IA attend qu'on revienne à la position actuelle
-    if (pilotage === "affichage" && pos < n - 1) return;
-    const t = setTimeout(() => useJeu.getState().coupIA(), seule ? vitesse : 450);
-    return () => clearTimeout(t);
-  }, [ia, n, occupe, panne, lecture, vitesse, mode, joueurs, pos, pilotage]);
-}
-
 /** Analyse automatique de la position affichée : quitter une position arrête son analyse (elle
  *  reprend au retour si elle n'était pas terminée) ; une analyse arrêtée au bouton ne repart pas.
- *  Pendant que l'IA réfléchit, pas d'analyse : elle lui prendrait du temps de calcul. */
+ *  Au tour de l'IA, c'est sa réflexion ; pendant qu'elle joue (requête en cours), pas d'analyse. */
 function useAnalyseAuto() {
   const analyse = useAnalyseActive();
   const pos = useJeu(s => s.pos);
@@ -66,10 +43,10 @@ function useAnalyseAuto() {
   });
   const enAnalyse = useJeu(s => s.enAnalyse);
   const mode = useJeu(s => s.mode);
-  const iaReflechit = useJeu(s => s.occupe && s.ia);
+  const iaJoue = useJeu(s => s.occupe && auTraitIA(s));
   useEffect(() => {
     const s = useJeu.getState();
-    if (!analyse || !id || mode !== "jeu" || iaReflechit) {
+    if (!analyse || !id || mode !== "jeu" || iaJoue) {
       if (enAnalyse !== null) s.arreterAnalyse();
       return;
     }
@@ -78,13 +55,8 @@ function useAnalyseAuto() {
     if (fait) return;
     const t = setTimeout(() => useJeu.getState().analyser(pos), 150);
     return () => clearTimeout(t);
-  }, [analyse, pos, id, fait, enAnalyse, mode, iaReflechit]);
+  }, [analyse, pos, id, fait, enAnalyse, mode, iaJoue]);
 }
-
-const aidesVisibles = () => {
-  const s = useJeu.getState();
-  return s.aides || !s.joueurs.some(j => j.type === "humain");
-};
 
 function useClavier() {
   useEffect(() => {
@@ -101,8 +73,8 @@ function useClavier() {
         Home: () => s.aller(0),
         End: () => s.aller(s.images.length - 1),
         Escape: () => s.set({ piece: null, caseChoisie: null }),
-        a: () => { if (aidesVisibles() && !s.hybride) s.basculerAnalyse(); },
-        " ": () => { if (s.ia && !s.occupe) void s.coupIA(); },
+        a: () => { if (aidesVisibles(s) && !s.hybride) s.basculerAnalyse(); },
+        " ": () => { if (auTraitIA(s) && !s.fini && !s.occupe) void s.coupIA(); },   // l'IA joue maintenant
         n: () => s.set({ dialogue: true }),
         t: s.basculerRetourne,
         e: () => void s.ouvrirEditeur(),
@@ -126,9 +98,9 @@ function Statut() {
   const images = useJeu(s => s.images);
   const pos = useJeu(s => s.pos);
   const attente = useJeu(s => s.attente);
-  const lecture = useJeu(s => s.lecture);
   const tirage = useJeu(s => s.tirage);
   const hybride = useJeu(s => s.hybride);
+  const occupe = useJeu(s => s.occupe);
   const img = images[pos];
   if (!img) return <div className="phase"><span className="etiquette">Préparation…</span></div>;
   if (tirage && pos === images.length - 1) {
@@ -140,7 +112,6 @@ function Statut() {
       </div>
     );
   }
-  const pause = !lecture && joueurs.every(j => j.type === "ia");
   const passe = pos < images.length - 1;
   const t = img.t;
   let etiquette: string, detail: string, cls: string;
@@ -155,10 +126,11 @@ function Statut() {
   } else {
     const qui = EQUIPE[trait];
     etiquette = humain
-      ? (hybride ? "Joueur plateau : saisissez son coup"
+      ? (hybride ? (trait === hybride.ia ? "IA : à vous de choisir son coup" : "Joueur plateau : saisissez son coup")
         : joueurs.filter(j => j.type === "humain").length > 1 ? `${qui} : à vous de jouer` : "À vous de jouer")
-      : pause ? "En pause" : `${qui} réfléchit${joueurs[trait]?.duree ? ` (${joueurs[trait].duree} s)` : ""}…`;
-    detail = attente || `manche ${img.r} · ${qui} au trait`;
+      : occupe ? `${qui} joue…` : `${qui} réfléchit…`;
+    detail = attente || (humain ? `manche ${img.r} · ${qui} au trait`
+      : `manche ${img.r} · « L'IA joue maintenant » (Espace) quand vous le décidez`);
     cls = humain ? "humain" : "ia";
   }
   return (
@@ -201,7 +173,8 @@ function KpiBastions() {
 function BasculeAides() {
   const humains = useJeu(s => s.joueurs.some(j => j.type === "humain"));
   const aides = useJeu(s => s.aides);
-  if (!humains) return null;
+  const hybride = useJeu(s => s.hybride !== null);
+  if (!humains || hybride) return null;   // hybride : aides toujours affichées
   const set = (v: boolean) => useJeu.getState().set(v ? { aides: true } : { aides: false, onglet: "coups" });
   return (
     <div className="bascule aides" role="radiogroup" aria-label="Aides de jeu"
@@ -299,19 +272,24 @@ function SousPlateau() {
   const attente = useJeu(s => s.attente);
   const tirage = useJeu(s => s.tirage);
   const hybride = useJeu(s => s.hybride);
+  const trait = useJeu(s => s.trait);
   const coupsIA = useCoupsIA();
   if (!img || !decor) return <div className="sous-plateau" />;
+  const tourIA = hybride !== null && trait === hybride.ia;
   let texte;
   if (vivant && tirage) {
     texte = tirage.coup && tirage.coup.j === hybride?.ia
       ? <span className="a-reproduire">À reproduire pour l'IA : <b>{tirage.coup.d}</b>, puis piochez dans son sac (à droite)</span>
       : <span className="attente-decision">Piochez dans le sac de l'IA et saisissez les pièces à droite</span>;
-  } else if (vivant && humain && hybride && coupsIA.length) {
+  } else if (vivant && humain && hybride && !tourIA && coupsIA.length) {
     texte = <span className="a-reproduire">À reproduire pour l'IA : <b>{coupsIA.join(" · ")}</b>, puis saisissez le coup du joueur plateau</span>;
   } else if (vivant && humain && attente) texte = <span className="attente-decision">{attente}</span>;
   else if (vivant && humain) {
     texte = <span className="attente-decision">
-      {img.tir ? (hybride ? "Draft : saisissez la carte choisie par le joueur plateau" : "Draft : choisissez une carte Unité dans votre colonne")
+      {img.tir ? (tourIA ? "Draft : choisissez la carte de l'IA (valeur de chaque carte dans sa colonne)"
+        : hybride ? "Draft : saisissez la carte choisie par le joueur plateau" : "Draft : choisissez une carte Unité dans votre colonne")
+        : tourIA ? (piece ? `${NOMS[piece]} : choisissez une case en surbrillance, ou un coup dans la liste`
+          : "Choisissez le coup de l'IA : une ligne de sa réflexion (à droite), ou une pièce de sa main puis la case")
         : hybride ? (piece ? `${nomPiece(piece)} : choisissez une case en surbrillance, ou un coup dans la liste` : "Choisissez à droite la pièce jouée sur la table, puis la case")
         : piece ? `${NOMS[piece]} : choisissez une case en surbrillance, ou un coup dans la liste` : "Choisissez une pièce de votre main, ou une unité sur le plateau"}
     </span>;
@@ -385,43 +363,21 @@ function PlateauJeu() {
   );
 }
 
-const PILOTAGES: [Pilotage, string, string][] = [
-  ["auto", "IA : dès son tour", "L'IA joue dès que c'est son tour, même si vous regardez un coup passé : la partie continue pendant que vous analysez"],
-  ["affichage", "IA : position actuelle", "L'IA attend que la position actuelle soit affichée : revenir sur un coup passé met la partie en attente"],
-  ["demande", "IA : sur demande", "L'IA ne joue que lorsque vous cliquez « Coup de l'IA » (ou Espace)"],
-];
-
 function Navigation() {
   const n = useJeu(s => s.images.length - 1);
   const pos = useJeu(s => s.pos);
   const img = useJeu(s => s.images[s.pos]);
   const joueurs = useJeu(s => s.joueurs);
-  const lecture = useJeu(s => s.lecture);
-  const vitesse = useJeu(s => s.vitesse);
   const fini = useJeu(s => s.fini);
   const hybride = useJeu(s => s.hybride);
-  const pilotage = useJeu(s => s.pilotage);
-  const ia = useJeu(s => s.ia);
-  const occupe = useJeu(s => s.occupe);
-  const panne = useJeu(s => s.panne);
   const s = useJeu.getState();
   if (!img) return null;
-  const seule = joueurs.every(j => j.type === "ia");
   const humains = joueurs.some(j => j.type === "humain");
-  const avecIA = joueurs.some(j => j.type === "ia");
-  // l'IA a le trait mais le pilote ne la fera pas jouer : on peut la faire jouer à la main
-  const enAttente = ia && !fini && (pilotage === "demande" || (seule && !lecture) || (pilotage === "affichage" && pos < n) || panne);
   return (
     <div className="lecteur">
       <div className="boutons">
         <button type="button" onClick={() => s.aller(0)} title="Début (Origine)" aria-label="Début">⏮</button>
         <button type="button" onClick={() => s.pas(-1)} title="Décision précédente (←)" aria-label="Décision précédente">◀</button>
-        {seule && !fini && pilotage !== "demande" && (
-          <button type="button" className="principal"
-            onClick={() => s.set({ lecture: !lecture, panne: false, ...(pilotage === "affichage" && !lecture ? { pos: n } : {}) })}>
-            {lecture ? "Pause" : "Lecture"}
-          </button>
-        )}
         <button type="button" onClick={() => s.pas(1)} title="Décision suivante (→)" aria-label="Décision suivante">▶</button>
         <button type="button" onClick={() => s.aller(n)} title="Position actuelle (Fin)" aria-label="Position actuelle">⏭</button>
       </div>
@@ -436,30 +392,14 @@ function Navigation() {
           <span>Décision <b>{pos}</b> / {n}</span>
         </div>
       </div>
-      {avecIA && !fini && (
-        <div className="pilotage">
-          <select value={pilotage} onChange={e => s.setPilotage(e.target.value as Pilotage)} aria-label="Quand l'IA joue"
-            title={PILOTAGES.find(p => p[0] === pilotage)?.[2]}>
-            {PILOTAGES.map(([v, l, t]) => <option key={v} value={v} title={t}>{l}</option>)}
-          </select>
-          {seule && pilotage !== "demande" && (
-            <select value={vitesse} onChange={e => { s.set({ vitesse: +e.target.value }); sauverPrefs(); }} aria-label="Vitesse de l'IA">
-              {[[1500, "Lent"], [700, "Normal"], [250, "Rapide"], [30, "Éclair"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          )}
-          {enAttente && (
-            <button type="button" className="on" disabled={occupe} onClick={() => { s.set({ panne: false }); void s.coupIA(); }}
-              title="Faire jouer à l'IA sa prochaine décision (Espace)">Coup de l'IA</button>
-          )}
-        </div>
-      )}
+      <JouerMaintenant />
       {pos < n ? (
         <button type="button" className="reprendre" onClick={() => s.revenir(pos)}
           title={fini ? "Partie terminée : rejouer depuis la position affichée dans une nouvelle partie (variante)"
             : "Effacer la suite et reprendre la partie depuis la position affichée"}>{fini ? "Variante d'ici" : "Reprendre d'ici"}</button>
       ) : humains && !fini ? (
         hybride ? (
-          <button type="button" onClick={s.annuler} title="Annuler la dernière saisie : coup du joueur plateau (et réponse de l'IA), ou pioche en cours">Annuler la saisie</button>
+          <button type="button" onClick={s.annuler} title="Annuler la dernière saisie : dernier coup (de l'IA ou du joueur plateau), ou coup en attente de la pioche de l'IA">Annuler la saisie</button>
         ) : (
           <button type="button" onClick={s.annuler} disabled={n === 0} title="Annuler votre dernier coup (et la réponse de l'IA)">Annuler mon coup</button>
         )
@@ -537,7 +477,7 @@ function PanneauPioche() {
       <h3>{titre}</h3>
       {t.coup && (
         <p className={`coup-declencheur${t.coup.j === hybride.ia ? " ia" : ""}`}>
-          {t.coup.j === hybride.ia ? <>L'IA joue <code>{t.coup.n}</code> {t.coup.d} : reproduisez-le sur le plateau.</>
+          {t.coup.j === hybride.ia ? <>Coup de l'IA : <code>{t.coup.n}</code> {t.coup.d} ; reproduisez-le sur le plateau.</>
             : <>Coup saisi : <code>{t.coup.n}</code> {t.coup.d}</>}
         </p>
       )}
@@ -603,14 +543,25 @@ function ListeCoups() {
   const { tous, filtres } = useCoups();
   const tirage = useJeu(s => s.tirage);
   const hybride = useJeu(s => s.hybride);
+  const trait = useJeu(s => s.trait);
   const s = useJeu.getState();
   if (vivant && tirage) return <PanneauPioche />;
   if (!vivant) {
     return <p className="vide">Vous consultez l'historique. <button type="button" onClick={() => s.aller(s.images.length - 1)}>Revenir à la position actuelle</button></p>;
   }
   if (fini) return <p className="vide">Partie terminée. Lancez une nouvelle partie ou parcourez le déroulé (← →) avec l'analyse.</p>;
-  if (!humain) return <p className="vide">L'IA réfléchit…</p>;
-  const invite = hybride ? "Saisissez le coup joué sur la table" : "";
+  const lignes = <button type="button" onClick={() => s.set({ onglet: "analyse" })}>Voir sa réflexion</button>;
+  if (!humain) {
+    return (
+      <div className="vide attente-ia">
+        <p>L'IA réfléchit : c'est vous qui décidez quand elle joue. {lignes}</p>
+        <JouerMaintenant />
+      </div>
+    );
+  }
+  const invite = !hybride ? "" : trait === hybride.ia ? (
+    <>Choisissez le coup de l'IA, puis jouez-le sur la table. {lignes}</>
+  ) : "Saisissez le coup joué sur la table";
   const nom = (i: number | null) => (i === null || !decor ? "" : decor.cases[i][0]);
   const liste = piece !== null || caseChoisie !== null ? filtres : tous;
   return (
@@ -647,7 +598,10 @@ function ListeCoups() {
 function PanneauCote() {
   const onglet0 = useJeu(s => s.onglet);
   const hybride = useJeu(s => s.hybride);
-  const aides = useAides() || hybride !== null;   // hybride : l'analyse vue par l'IA reste visible
+  const tourIA = useTourIA();
+  const fini = useJeu(s => s.fini);
+  // au tour de l'IA, sa réflexion est toujours visible (hybride : l'analyse vue par l'IA aussi)
+  const aides = useAides() || (tourIA && !fini);
   const onglet = aides ? onglet0 : "coups";
   const n = useCoups().tous.length;
   const s = useJeu.getState();
@@ -655,11 +609,11 @@ function PanneauCote() {
     <aside className="cote">
       <div className="onglets" role="tablist">
         <button role="tab" aria-selected={onglet === "coups"} className={onglet === "coups" ? "on" : ""} onClick={() => s.set({ onglet: "coups" })}>
-          {hybride ? "Saisie" : "Vos coups"} <span className="n">{n || ""}</span>
+          {hybride ? (tourIA ? "Coups de l'IA" : "Saisie") : "Vos coups"} <span className="n">{n || ""}</span>
         </button>
         {aides && (
           <button role="tab" aria-selected={onglet === "analyse"} className={onglet === "analyse" ? "on" : ""} onClick={() => s.set({ onglet: "analyse" })}>
-            Analyse
+            {tourIA && !fini ? "Réflexion de l'IA" : "Analyse"}
           </button>
         )}
       </div>
@@ -687,7 +641,6 @@ export function PageJouer() {
   const info = useJeu(s => s.info);
   const analyse = useAnalyseActive();
   const demarre = useRef(false);
-  usePilote();
   useAnalyseAuto();
   useClavier();
   useEffect(() => {

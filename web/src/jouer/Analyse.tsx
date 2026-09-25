@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EQUIPE } from "../jeu";
-import { sauverPrefs, useAnalyseActive, useJeu } from "./store";
+import { auTraitIA, sauverPrefs, useAnalyseActive, useJeu, useTourIA } from "./store";
 import type { LimiteAnalyse, Analyse as TAnalyse } from "./types";
 
 /** Texte principal, détail et couleur d'une évaluation (point de vue d'Or : + Or, − Argent). */
@@ -15,7 +15,7 @@ export function libelleScore(a: TAnalyse): { texte: string; detail: string; cls:
   return { texte: a.texte, detail: a.mat ? libelle : `${symbole} ${libelle}`, cls };
 }
 
-/** Dernière évaluation connue à la position affichée ou avant (l'IA au trait n'est pas analysée). */
+/** Dernière évaluation connue à la position affichée ou avant (quelques positions en arrière). */
 function useEvalAffichee(): TAnalyse | null {
   const analyses = useJeu(s => s.analyses);
   const pos = useJeu(s => s.pos);
@@ -68,6 +68,24 @@ function avancement(a: TAnalyse, l: LimiteAnalyse): number | null {
   return null;
 }
 
+/** L'IA a le trait : c'est vous qui décidez quand elle joue. Elle joue le premier coup de sa
+ *  réflexion, telle qu'elle en est (sans réflexion encore : une courte recherche). */
+export function JouerMaintenant() {
+  const tour = useTourIA();
+  const fini = useJeu(s => s.fini);
+  const occupe = useJeu(s => s.occupe);
+  const hybride = useJeu(s => s.hybride !== null);
+  const coup = useJeu(s => s.analyses[s.images.length - 1]?.coups?.[0]?.coup);
+  if (!tour || fini) return null;
+  return (
+    <button type="button" className="on jouer-maintenant" disabled={occupe} onClick={() => void useJeu.getState().coupIA()}
+      title="L'IA joue le premier coup de sa réflexion, telle qu'elle en est (Espace)">
+      {occupe ? "L'IA joue…" : hybride ? "Jouer son meilleur coup" : "L'IA joue maintenant"}
+      {coup && !occupe && <code>{coup}</code>}
+    </button>
+  );
+}
+
 export function Analyse() {
   const analyse = useAnalyseActive();
   const a = useJeu(s => s.analyses[s.pos]);
@@ -77,7 +95,10 @@ export function Analyse() {
   const fleche = useJeu(s => s.fleche);
   const humain = useJeu(s => s.humain);
   const vivant = useJeu(s => s.pos === s.images.length - 1);
-  const iaReflechit = useJeu(s => s.occupe && s.ia);
+  const iaJoue = useJeu(s => s.occupe && auTraitIA(s));
+  const tourIA = useTourIA();
+  const hybride = useJeu(s => s.hybride !== null);
+  const trait = useJeu(s => s.trait);
   const s = useJeu.getState();
 
   if (!analyse) {
@@ -97,12 +118,26 @@ export function Analyse() {
   const reseau = a?.source === "reseau";
   const av = a && reseau ? avancement(a, limite) : null;
   const vitesse = a?.secondes ? (a.simulations ?? 0) / a.secondes : 0;
+  // réflexion de l'IA : la position actuelle, l'IA au trait (hybride : on choisit aussi son coup)
+  const reflexion = tourIA && vivant && !a?.fini;
   return (
     <div className="analyse">
+      {reflexion && (
+        <div className="tete-reflexion">
+          <div>
+            <b>Réflexion de l'IA ({EQUIPE[trait]})</b>
+            <span>
+              {hybride ? "Cliquez une ligne pour jouer ce coup pour l'IA, puis reproduisez-le sur la table."
+                : "Elle jouera le premier coup de la liste quand vous le déciderez."}
+            </span>
+          </div>
+          <JouerMaintenant />
+        </div>
+      )}
       <div className="tete-analyse">
         <div className={`gros-score ${txt?.cls ?? ""}`}>{txt?.texte ?? "…"}</div>
         <div className="det-score">
-          <b>{txt?.detail || (enCours ? "Calcul…" : iaReflechit ? "L'IA réfléchit : l'analyse reprend après son coup" : "")}</b>
+          <b>{txt?.detail || (iaJoue ? "L'IA joue…" : enCours ? "Calcul…" : "")}</b>
           {a && !a.fini && (
             <span>
               Bastions Or {a.bastions[0]} · Argent {a.bastions[1]}
@@ -171,7 +206,7 @@ export function Analyse() {
         {coups.map((c, k) => (
           <li key={k}>
             <button type="button" disabled={!(humain && vivant)}
-              title={humain && vivant ? "Jouer ce coup" : c.description}
+              title={humain && vivant ? (reflexion ? "Jouer ce coup pour l'IA" : "Jouer ce coup") : c.description}
               onClick={() => s.jouer(c.i)}
               onMouseEnter={() => s.setSurvol(c.cases.length ? c.cases : null)} onMouseLeave={() => s.setSurvol(null)}>
               <span className={`s ${c.score > 0.05 ? "or" : c.score < -0.05 ? "argent" : ""}`}>{c.texte}</span>
@@ -180,7 +215,11 @@ export function Analyse() {
                 {c.part !== undefined ? `${Math.round(100 * c.part)} %` : `${Math.round(100 * c.probabilite)} %`}
               </span>
               <span className="d">{c.description}</span>
-              {c.ligne.length > 1 && <span className="l">{c.ligne.slice(1).join("  ")}</span>}
+              {c.ligne.length > 1 && (
+                <span className="l" title="Suite attendue ; couleur du camp qui joue chaque coup">
+                  {c.ligne.slice(1).map((m, j) => <span key={j} className={`m e${c.equipes?.[j + 1] ?? ""}`}>{m}</span>)}
+                </span>
+              )}
             </button>
           </li>
         ))}
@@ -201,8 +240,8 @@ function Legende() {
         <dt>#3 / #-2</dt><dd>Victoire forcée : Or (#3) ou Argent (#-2) pose son dernier marqueur en au plus 3 (2) coups, quoi que fasse l'adversaire et quels que soient les tirages du sac. Cherchée jusqu'à la fin de la manche.</dd>
         <dt>= ⩲ ± +−</dt><dd>Égalité, léger, net, décisif avantage d'Or (⩱ ∓ −+ pour Argent), comme aux échecs.</dd>
         <dt>Profondeur</dt><dd>L'analyse approfondit par passes successives, comme un moteur d'échecs : chaque profondeur double le nombre de simulations. L'horizon est le nombre de coups que les simulations anticipent (en moyenne, et au plus loin).</dd>
-        <dt>Ordre</dt><dd>Les coups sont classés comme l'IA choisit le sien : d'abord les plus explorés, puis le meilleur score. Le premier est le coup que l'IA jouerait. Le pourcentage est la part des simulations consacrées au coup : un score peu exploré est moins sûr.</dd>
-        <dt>Ligne</dt><dd>Suite la plus explorée par la recherche après le coup proposé ; un coup = une pièce jouée, avec ses effets enchaînés (&gt;).</dd>
+        <dt>Ordre</dt><dd>Les coups sont classés comme l'IA choisit le sien : d'abord les plus explorés, puis le meilleur score. Le premier est le coup que l'IA jouerait : c'est lui qu'elle joue quand vous cliquez « L'IA joue maintenant » (Espace). Le pourcentage est la part des simulations consacrées au coup : un score peu exploré est moins sûr.</dd>
+        <dt>Ligne</dt><dd>Suite la plus explorée par la recherche après le coup proposé, en couleur du camp qui joue chaque coup (Or, Argent) ; un coup = une pièce jouée, avec ses effets enchaînés (&gt;).</dd>
       </dl>
     </details>
   );

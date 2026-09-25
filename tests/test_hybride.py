@@ -10,6 +10,7 @@ from champ_dhonneur.bots.neural import NeuralBot
 from champ_dhonneur.engine import FACE_DOWN, Game
 from champ_dhonneur.hybride import (CACHEE, TirageRequis, concretiser, coups_libres, essayer,
                                     pieces_possibles)
+from champ_dhonneur.notation import action_str
 from champ_dhonneur.server import jeu
 from champ_dhonneur.server.app import app
 
@@ -175,6 +176,7 @@ def jouer_sur_table(c, config, verite, ia, seed, max_decisions=400, plateau="glo
     e = saisir_pioches(c, gid, e, list(verite.players[ia].hand), vus)   # première main (mode libre)
     verite._draw = enregistrer
     plateau = make_bot(plateau, seed=seed)
+    choix_ia = make_bot("glouton", seed=ia)          # l'opérateur, qui choisit les coups de l'IA
     for _ in range(max_decisions):
         assert public(s.game) == public(verite) and prive(s.game, ia) == prive(verite, ia)
         assert all(x == "?" for i in e["images"] for x in i["j"][1 - ia]["h"])   # main fictive masquée
@@ -182,8 +184,13 @@ def jouer_sur_table(c, config, verite, ia, seed, max_decisions=400, plateau="glo
             break
         tirees.clear()
         if verite.to_move == ia:
-            e = c.post(f"/api/jeu/{gid}/ia?{suite(e)}").json()
-            a = s.attente["action"] if s.attente else s.actions[-1]
+            # l'IA ne joue pas seule : son coup est choisi parmi ses coups réels (sa main est connue)
+            assert e["humain"] and not e["ia"] and e["possibles"] is None
+            coups = s.game.legal_actions()
+            assert [l["kind"] for l in e["legal"]] == [x.kind for x in coups]
+            a = choix_ia.choose(s.game)
+            e = c.post(f"/api/jeu/{gid}/jouer?{suite(e)}", json={"index": coups.index(a)}).json()
+            assert (s.attente["action"] if s.attente else s.actions[-1]) == a
             assert a in verite.legal_actions()
             verite.apply(a)
         else:
@@ -278,6 +285,61 @@ def test_saisies_refusees_et_annulation(client):
     assert client.post("/api/jeu", json={"hybride": True, "joueurs": [{"type": "humain"}] * 2}).status_code == 400
 
 
+def coup_de_l_ia(e):
+    """Coup choisi pour l'IA : un coup face visible si possible (déploiement, renfort…)."""
+    assert e["trait"] == e["hybride"]["ia"] and e["humain"] and not e["ia"]
+    return next((l["i"] for l in e["legal"] if l["kind"] not in FACE_DOWN), e["legal"][0]["i"])
+
+
+def test_l_ia_ne_joue_pas_seule(client):
+    """Hybride : au tour de l'IA, on choisit son coup parmi ses coups réels."""
+    armees = [list("SPXH"), list("ACLE")]
+    e = client.post("/api/jeu", json={"mode": "libre", "armees": armees, "premier": 1, "hybride": True,
+                                      "joueurs": [{"type": "humain"}, {"type": "ia"}]}).json()
+    gid = e["id"]
+    for piece in ("A", "C", "E"):
+        e = client.post(f"/api/jeu/{gid}/tirage", json={"piece": piece}).json()
+    assert e["trait"] == 1 and e["humain"] and not e["ia"] and e["possibles"] is None
+    assert e["legal"] and all(l["coin"] in ("A", "C", "E") for l in e["legal"])   # sa main, pas « ? »
+    assert client.get(f"/api/jeu/{gid}").json()["n"] == 1    # rien ne se joue de soi-même
+    assert e["joueurs"][1]["nom"] == "IA conseillère"
+    i = coup_de_l_ia(e)
+    e = client.post(f"/api/jeu/{gid}/jouer", json={"index": i}).json()
+    assert e["n"] == 2 and e["trait"] == 0 and e["possibles"]
+    # annuler : revient au choix du coup de l'IA
+    e = client.post(f"/api/jeu/{gid}/annuler").json()
+    assert e["n"] == 1 and e["trait"] == 1 and e["humain"]
+
+
+def test_meilleures_lignes_au_tour_de_l_ia(client, monkeypatch):
+    """Hybride : au tour de l'IA, sa réflexion (vue par l'IA, avec le modèle choisi pour elle) propose
+    ses meilleures lignes, chaque coup avec le camp qui le joue ; « Jouer son meilleur coup » (/ia)
+    joue la première."""
+    monkeypatch.setattr(jeu, "modeles", lambda: [{"chemin": "heur", "nom": "heuristique"}])
+    bot = NeuralBot(heuristique=True, seed=0)
+    bot.k = None
+    vus = []
+    monkeypatch.setattr(jeu, "_analyste", lambda modele: vus.append(modele) or bot)
+    armees = [list("SPXH"), list("ACLE")]
+    e = client.post("/api/jeu", json={"mode": "libre", "armees": armees, "premier": 1, "hybride": True,
+                                      "joueurs": [{"type": "humain"}, {"type": "ia", "modele": "heur"}]}).json()
+    gid = e["id"]
+    for piece in ("A", "C", "E"):
+        e = client.post(f"/api/jeu/{gid}/tirage", json={"piece": piece}).json()
+    assert e["joueurs"][1]["nom"] == "IA conseillère — heuristique"
+    a = client.post(f"/api/jeu/{gid}/analyse?simulations=64").json()
+    assert vus == ["heur"] and a["observateur"] == 1 and a["coups"]
+    s = jeu.SESSIONS[gid]
+    for c in a["coups"]:
+        assert len(c["equipes"]) == len(c["ligne"]) and c["equipes"][0] == s.game.team(1)
+        assert set(c["equipes"]) <= {0, 1}
+    g = s.game.copy()
+    meilleur = g.legal_actions()[a["coups"][0]["i"]]
+    assert action_str(g, meilleur) == a["coups"][0]["coup"]
+    e = client.post(f"/api/jeu/{gid}/ia").json()
+    assert (s.attente["action"] if s.attente else s.actions[-1]) == meilleur
+
+
 def test_coup_cache_du_joueur_plateau_jamais_devoile(client):
     """Le joueur plateau passe jusqu'à la fin de la manche, qui fait piocher l'IA. Ni le panneau de
     pioche ni le déroulé ne montrent la pièce (fictive) qu'il a défaussée."""
@@ -288,11 +350,11 @@ def test_coup_cache_du_joueur_plateau_jamais_devoile(client):
     for piece in ("A", "C", "E"):
         e = client.post(f"/api/jeu/{gid}/tirage", json={"piece": piece}).json()
     while not e["tirage"]:
-        if e["ia"]:
-            e = client.post(f"/api/jeu/{gid}/ia").json()
+        if e["trait"] == 1:
+            i = coup_de_l_ia(e)
         else:
             i = next(l["i"] for l in e["legal"] if l["kind"] == "pass")
-            e = client.post(f"/api/jeu/{gid}/jouer", json={"index": i}).json()
+        e = client.post(f"/api/jeu/{gid}/jouer", json={"index": i}).json()
     coup = e["tirage"]["coup"]
     assert e["tirage"]["contexte"] == "manche" and coup["j"] == 0    # Argent a commencé : Or finit la manche
     assert coup["d"] == "Passer (pièce cachée)"
@@ -313,11 +375,11 @@ def test_apercu_du_coup_de_l_ia_avant_sa_pioche(client):
     assert e["apercu"] is None
     # Or ouvre et passe : l'IA (Argent) joue la dernière pièce de la manche, puis doit piocher
     while not e["tirage"]:
-        if e["ia"]:
-            e = client.post(f"/api/jeu/{gid}/ia").json()
+        if e["trait"] == 1:
+            i = coup_de_l_ia(e)
         else:
             i = next(l["i"] for l in e["legal"] if l["kind"] == "pass")
-            e = client.post(f"/api/jeu/{gid}/jouer", json={"index": i}).json()
+        e = client.post(f"/api/jeu/{gid}/jouer", json={"index": i}).json()
     t, ap = e["tirage"], e["apercu"]
     assert t["coup"]["j"] == 1 and ap is not None
     assert ap["a"]["j"] == 1 and ap["a"]["n"] == t["coup"]["n"]     # le coup de l'IA est joué dans l'aperçu
