@@ -127,6 +127,8 @@ export interface Tableau {
     eval_tous?: number;
   };
   phase: Phase | null;
+  /** pause demandée depuis l'interface (prise en compte après l'itération en cours) */
+  controle?: { pause?: boolean; demande?: number };
   series: Series;
   courbe: PointElo[];
   parties: ResumePartie[];

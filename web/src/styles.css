@@ -66,6 +66,8 @@ code { font-family: var(--mono); }
 .phase.apprentissage { border-left-color: var(--serie); }
 .phase.evaluation { border-left-color: var(--or); }
 .phase.arret { border-left-color: var(--texte-3); opacity: 0.8; }
+.phase.pause { border-left-color: var(--texte-2); }
+button.pause-demandee { border-color: var(--or); color: var(--or); }
 .phase .etiquette { font-weight: 700; font-size: 1.15rem; }
 .phase .it { font-weight: 500; color: var(--texte-2); }
 .phase .detail { font-size: 0.85rem; color: var(--texte-2); font-variant-numeric: tabular-nums; }

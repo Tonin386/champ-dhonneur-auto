@@ -658,6 +658,29 @@ class Entraineur:
             if self.tb is not None:
                 self.tb.close()
 
+    def _attendre_reprise(self) -> None:
+        """Pause demandée depuis l'interface web (controle.json, {"pause": true}) : prise en compte
+        entre deux itérations complètes (auto-jeu, apprentissage, évaluation) ; attend la reprise."""
+        f = self.dir / "controle.json"
+
+        def en_pause() -> bool:
+            try:
+                return bool(json.loads(f.read_text(encoding="utf-8")).get("pause"))
+            except (OSError, ValueError):
+                return False
+
+        if not en_pause():
+            return
+        it = self.etat["iteration"]
+        print(f"Pause demandée : arrêt après l'itération {it} (reprise depuis l'interface web)", flush=True)
+        if self.cfg.direct:
+            ecrire_phase(self.dir, "pause", it)
+        if self.torch.cuda.is_available():
+            self.torch.cuda.empty_cache()
+        while en_pause():
+            time.sleep(2)
+        print("Reprise de l'entraînement", flush=True)
+
     def _tensorboard(self, l: dict) -> None:
         if self.tb is None:
             return
@@ -686,6 +709,7 @@ class Entraineur:
         if not (self.dir / "modeles" / "dernier.pt").exists():
             self.sauver(0)   # réseau initial (aléatoire)
         while cfg.iterations <= 0 or self.etat["iteration"] < cfg.iterations:
+            self._attendre_reprise()
             it = self.etat["iteration"] + 1
             t0 = time.time()
             data, st = self.autojeu(it)

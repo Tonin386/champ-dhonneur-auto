@@ -17,7 +17,10 @@ web/tsconfig.tsbuildinfo
 champ_dhonneur/server/web/
 
 # Données produites : entraînements, parties, modèles
-runs/
+# (sauf le meilleur modèle de chaque entraînement, suivi par Git : commits faits à la main)
+runs/**
+!runs/**/
+!runs/*/modeles/meilleur.pt
 archives/
 data/
 modeles/*.pt

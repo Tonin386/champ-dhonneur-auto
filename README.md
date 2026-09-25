@@ -76,6 +76,10 @@ l'entraînement le plus récent de `runs/` :
   coup (Server-Sent Events) et l'anime sur le plateau ;
 - **mosaïque** de toutes les tables en direct, **rediffusions** des parties enregistrées (auto-jeu et
   évaluations), avec lecture, retour arrière, vitesse et barre de temps ;
+- **pause de l'entraînement** : « Pause après l'itération » arrête l'entraînement une fois
+  l'itération en cours terminée (auto-jeu, apprentissage, évaluation) ; « Reprendre » le relance.
+  La demande passe par `runs/<nom>/controle.json` (le dossier `runs` est donc monté en écriture
+  dans le conteneur web) ; elle survit à un redémarrage du conteneur d'entraînement ;
 - **régie automatique** : suit le direct, enchaîne sur la partie suivante ou sur une rediffusion ;
 - tableau de bord : phase en cours et avancement de l'itération, Elo, débit, pertes, précision.
 

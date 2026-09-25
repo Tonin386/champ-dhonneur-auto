@@ -41,6 +41,8 @@ interface Etat {
   demarrer(): void;
   suivante(): void;
   setErreur(e: string | null): void;
+  /** pause de l'entraînement après l'itération en cours, ou reprise */
+  pauseEntrainement(pause: boolean): Promise<void>;
 }
 
 export interface TableMsg {
@@ -109,6 +111,21 @@ export const useStore = create<Etat>()((set, get) => ({
   setErreur: erreur => set({ erreur }),
 
   recevoirTableau: t => set({ tableau: t, decalage: t.maintenant - Date.now() / 1000 }),
+  pauseEntrainement: async pause => {
+    const { run, tableau } = get();
+    if (!run) return;
+    try {
+      const r = await fetch(`/api/entrainements/${run}/pause`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pause }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : r.statusText);
+      // affichage immédiat, sans attendre le flux
+      if (tableau && get().run === run) set({ tableau: { ...tableau, controle: j.controle } });
+    } catch (e) {
+      set({ erreur: (e as Error).message });
+    }
+  },
 
   recevoirTable: msg => {
     const { tables, source, film } = get();

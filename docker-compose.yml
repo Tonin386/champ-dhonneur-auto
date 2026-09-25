@@ -40,7 +40,8 @@ services:
     <<: *utilisateur
     ports: ["8090:8000"]
     # ./parties : historique des parties de la page « Jouer » (créé par make continu / make docker)
-    volumes: ["./runs:/app/runs:ro", "./parties:/app/parties"]
+    # runs en écriture : seul runs/<nom>/controle.json (pause de l'entraînement) y est écrit
+    volumes: ["./runs:/app/runs", "./parties:/app/parties"]
     profiles: ["web"]   # « docker compose up web » ; hors du profil continu (même port que web-ia)
     restart: unless-stopped
 
@@ -49,7 +50,8 @@ services:
     image: champ-dhonneur-ia:latest
     <<: [*gpu, *utilisateur]
     ports: ["8090:8000"]
-    volumes: ["./modeles:/app/modeles:ro", "./runs:/app/runs:ro", "./parties:/app/parties"]
+    # runs en écriture : seul runs/<nom>/controle.json (pause de l'entraînement) y est écrit
+    volumes: ["./modeles:/app/modeles:ro", "./runs:/app/runs", "./parties:/app/parties"]
     environment:
       HOME: /tmp
       # le bot IA suit le meilleur modèle de l'entraînement continu (rechargé dès qu'il change),

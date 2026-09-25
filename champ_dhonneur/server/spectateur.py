@@ -26,6 +26,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from ..engine import Action, Game
 from ..notation import action_str, describe, import_record, parse_headers
@@ -261,7 +262,7 @@ def tableau(d: Path, parties: int = 150) -> dict:
                    "simulations": cfg.get("autojeu", {}).get("simulations"),
                    "parties_par_iteration": cfg.get("parties_par_iteration"),
                    "travailleurs": cfg.get("travailleurs"), "eval_tous": cfg.get("eval_tous")},
-        "phase": phase, "series": cols, "courbe": courbe, "parties": _parties(d, parties),
+        "phase": phase, "controle": _lire_json(d / "controle.json", {}), "series": cols, "courbe": courbe, "parties": _parties(d, parties),
         "totaux": {"parties": sum(cols["parties"]),
                    "secondes": round(sum((a or 0) + (b or 0) + (c or 0) for a, b, c in
                                          zip(cols["t_autojeu"], cols["t_apprentissage"], cols["t_evaluation"])))},
@@ -271,7 +272,7 @@ def tableau(d: Path, parties: int = 150) -> dict:
 
 def _signature(d: Path) -> tuple:
     return tuple(_mtime(d / f) for f in ("journal.jsonl", "etat.json", "elo.json", "direct/phase.json",
-                                         "parties"))
+                                         "controle.json", "parties"))
 
 
 def unites(d: Path) -> dict:
@@ -394,6 +395,25 @@ def entrainements():
                                    _mtime(d / "direct" / "phase.json"))})
     out.sort(key=lambda r: -r["maj"])
     return {"entrainements": out}
+
+
+class Controle(BaseModel):
+    pause: bool
+
+
+@router.post("/api/entrainements/{nom}/pause")
+def pause(nom: str, req: Controle):
+    """Pause de l'entraînement après l'itération en cours (controle.json, lu par ia/entrainement.py),
+    ou reprise."""
+    d = dossier_run(nom)
+    try:
+        tmp = d / "controle.json.tmp"
+        tmp.write_text(json.dumps({"pause": req.pause, "demande": time.time()}), encoding="utf-8")
+        os.replace(tmp, d / "controle.json")
+    except OSError as e:
+        raise HTTPException(503, f"Impossible d'écrire dans {d} ({e.strerror}) : le dossier runs doit être "
+                                 "monté en écriture")
+    return {"controle": _lire_json(d / "controle.json", {})}
 
 
 @router.get("/api/entrainements/{nom}")

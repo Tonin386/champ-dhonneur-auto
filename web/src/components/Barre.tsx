@@ -11,7 +11,28 @@ export function useHorloge(ms = 1000) {
   }, [ms]);
 }
 
-const PHASES: Record<string, string> = { autojeu: "Auto-jeu", apprentissage: "Apprentissage", evaluation: "Évaluation" };
+const PHASES: Record<string, string> = {
+  autojeu: "Auto-jeu", apprentissage: "Apprentissage", evaluation: "Évaluation", pause: "En pause",
+};
+
+/** Pause après l'itération en cours (auto-jeu, apprentissage, évaluation), puis reprise. */
+function BoutonPause() {
+  const t = useStore(s => s.tableau);
+  if (!t) return null;
+  const demandee = !!t.controle?.pause;
+  const enPause = demandee && t.phase?.phase === "pause";
+  const { pauseEntrainement } = useStore.getState();
+  if (enPause) {
+    return <button type="button" className="on" onClick={() => pauseEntrainement(false)}
+      title="Reprendre l'entraînement à l'itération suivante">Reprendre</button>;
+  }
+  if (demandee) {
+    return <button type="button" className="pause-demandee" onClick={() => pauseEntrainement(false)}
+      title="La pause aura lieu à la fin de l'itération en cours ; cliquer pour l'annuler">Pause demandée · annuler</button>;
+  }
+  return <button type="button" onClick={() => pauseEntrainement(true)}
+    title="Arrêter l'entraînement à la fin de l'itération en cours (auto-jeu, apprentissage et évaluation terminés)">Pause après l'itération</button>;
+}
 
 function Phase() {
   const t = useStore(s => s.tableau);
@@ -35,12 +56,13 @@ function Phase() {
   const faites = tl.reduce((a, x) => a + x.parties, 0);
   const total = tl.reduce((a, x) => a + x.total, 0) || t.config.parties_par_iteration || 0;
   const avance = ph.phase === "autojeu" && total ? Math.min(1, faites / total) : null;
-  const arret = inactif > 1800 && !actives;
+  const pause = ph.phase === "pause";
+  const arret = !pause && inactif > 1800 && !actives;
   return (
     <div className={`phase ${ph.phase}${arret ? " arret" : ""}`}>
       <span className="etiquette">
         {arret ? "À l'arrêt ?" : ph.amorce && ph.phase === "autojeu" ? "Amorçage" : PHASES[ph.phase] ?? ph.phase}
-        <span className="it"> · it. {ph.iteration}</span>
+        {!pause && <span className="it"> · it. {ph.iteration}</span>}
       </span>
       {avance !== null && (
         <span className="progression" role="progressbar" aria-valuenow={Math.round(100 * avance)} aria-valuemin={0} aria-valuemax={100}>
@@ -50,9 +72,12 @@ function Phase() {
       <span className="detail">
         {arret
           ? `aucune activité depuis ${duree(inactif)}`
-          : avance !== null
-            ? `${entier(faites)} / ${entier(total)} parties · ${actives} table${actives > 1 ? "s" : ""} · ${duree(now - ph.debut)}`
-            : `depuis ${duree(now - ph.debut)}`}
+          : pause
+            ? `après l'itération ${ph.iteration} · depuis ${duree(now - ph.debut)}`
+            : avance !== null
+              ? `${entier(faites)} / ${entier(total)} parties · ${actives} table${actives > 1 ? "s" : ""} · ${duree(now - ph.debut)}`
+                + (t.controle?.pause ? " · pause à la fin de l'itération" : "")
+              : `depuis ${duree(now - ph.debut)}${t.controle?.pause ? " · pause à la fin de l'itération" : ""}`}
       </span>
     </div>
   );
@@ -113,6 +138,7 @@ export function Barre() {
           <button type="button" className={vue === "mosaique" ? "on" : ""} onClick={() => setVue("mosaique")} title="Toutes les tables (M)">Mosaïque</button>
           <button type="button" className={vue === "unites" ? "on" : ""} onClick={() => setVue("unites")} title="Valeur des unités, synergies, contres et draft (U)">Unités</button>
         </div>
+        <BoutonPause />
         <button type="button" className={regie ? "on" : ""} onClick={basculerRegie} aria-pressed={regie}
           title="Régie automatique : enchaîne les parties en direct et les rediffusions (R)">
           Régie auto
