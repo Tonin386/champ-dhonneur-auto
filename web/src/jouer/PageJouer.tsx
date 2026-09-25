@@ -6,7 +6,8 @@ import { EQUIPE, NOMS } from "../jeu";
 import { Analyse, BarreEval, CourbeEval, libelleScore } from "./Analyse";
 import { Editeur, PanneauPosition } from "./Editeur";
 import { DialogueNouvelle } from "./Nouvelle";
-import { useJeu } from "./store";
+import { DialogueParties } from "./Parties";
+import { sauverPrefs, useAides, useAnalyseActive, useJeu, type Pilotage } from "./store";
 import type { Legal } from "./types";
 
 const ATTAQUES = new Set(["attack"]);
@@ -29,7 +30,7 @@ export function useCoups() {
   }, [humain, legal, pos, n, piece, caseChoisie]);
 }
 
-/** L'IA joue quand elle a le trait (IA contre IA : seulement en lecture). */
+/** L'IA joue quand elle a le trait, selon le pilotage choisi (IA contre IA : pas en pause). */
 function usePilote() {
   const ia = useJeu(s => s.ia);
   const n = useJeu(s => s.images.length);
@@ -39,18 +40,22 @@ function usePilote() {
   const mode = useJeu(s => s.mode);
   const joueurs = useJeu(s => s.joueurs);
   const pos = useJeu(s => s.pos);
+  const pilotage = useJeu(s => s.pilotage);
+  const panne = useJeu(s => s.panne);
   useEffect(() => {
-    if (!ia || occupe || mode !== "jeu") return;
+    if (!ia || occupe || panne || mode !== "jeu" || pilotage === "demande") return;
     const seule = joueurs.every(j => j.type === "ia");
-    if (seule && (!lecture || pos < n - 1)) return;
+    if (seule && !lecture) return;
+    // « affichage » : l'IA attend qu'on revienne à la position actuelle
+    if (pilotage === "affichage" && pos < n - 1) return;
     const t = setTimeout(() => useJeu.getState().coupIA(), seule ? vitesse : 450);
     return () => clearTimeout(t);
-  }, [ia, n, occupe, lecture, vitesse, mode, joueurs, pos]);
+  }, [ia, n, occupe, panne, lecture, vitesse, mode, joueurs, pos, pilotage]);
 }
 
 /** Analyse automatique de la position affichée. */
 function useAnalyseAuto() {
-  const analyse = useJeu(s => s.analyse);
+  const analyse = useAnalyseActive();
   const pos = useJeu(s => s.pos);
   const id = useJeu(s => s.id);
   const fait = useJeu(s => !!s.analyses[s.pos]);
@@ -63,13 +68,19 @@ function useAnalyseAuto() {
   }, [analyse, pos, id, fait, enAnalyse, mode]);
 }
 
+const aidesVisibles = () => {
+  const s = useJeu.getState();
+  return s.aides || !s.joueurs.some(j => j.type === "humain");
+};
+
 function useClavier() {
   useEffect(() => {
     const f = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (["INPUT", "SELECT", "TEXTAREA"].includes((document.activeElement as HTMLElement)?.tagName)) return;
+      const cible = (document.activeElement as HTMLElement)?.tagName;
+      if (["INPUT", "SELECT", "TEXTAREA"].includes(cible) || (e.key === " " && cible === "BUTTON")) return;
       const s = useJeu.getState();
-      if (s.dialogue) return;
+      if (s.dialogue || s.historique) return;
       if (s.mode !== "jeu") { if (e.key.toLowerCase() === "e") s.set({ mode: "jeu" }); return; }
       const actions: Record<string, () => void> = {
         ArrowLeft: () => s.pas(-1),
@@ -77,7 +88,8 @@ function useClavier() {
         Home: () => s.aller(0),
         End: () => s.aller(s.images.length - 1),
         Escape: () => s.set({ piece: null, caseChoisie: null }),
-        a: s.basculerAnalyse,
+        a: () => { if (aidesVisibles()) s.basculerAnalyse(); },
+        " ": () => { if (s.ia && !s.occupe) void s.coupIA(); },
         n: () => s.set({ dialogue: true }),
         e: () => void s.ouvrirEditeur(),
         f: () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()),
@@ -144,7 +156,7 @@ function Statut() {
 }
 
 function KpiEval() {
-  const analyse = useJeu(s => s.analyse);
+  const analyse = useAnalyseActive();
   const a = useJeu(s => s.analyses[s.pos]);
   const enAnalyse = useJeu(s => s.enAnalyse !== null);
   if (!analyse) return null;
@@ -171,8 +183,25 @@ function KpiBastions() {
   );
 }
 
+/** Aides à la décision (partie avec au moins un humain) : masquées par défaut. */
+function BasculeAides() {
+  const humains = useJeu(s => s.joueurs.some(j => j.type === "humain"));
+  const aides = useJeu(s => s.aides);
+  if (!humains) return null;
+  const set = (v: boolean) => useJeu.getState().set(v ? { aides: true } : { aides: false, onglet: "coups" });
+  return (
+    <div className="bascule aides" role="radiogroup" aria-label="Aides de jeu"
+      title="Aides à la décision : évaluation, meilleurs coups et flèche, victoires forcées, valeur des cartes du draft, main de l'IA">
+      <span className="lib">Aides</span>
+      <button type="button" role="radio" aria-checked={!aides} className={aides ? "" : "on"} onClick={() => set(false)}>Masquées</button>
+      <button type="button" role="radio" aria-checked={aides} className={aides ? "on" : ""} onClick={() => set(true)}>Affichées</button>
+    </div>
+  );
+}
+
 function BarreJeu() {
   const analyse = useJeu(s => s.analyse);
+  const aides = useAides();
   const mode = useJeu(s => s.mode);
   const s = useJeu.getState();
   return (
@@ -196,10 +225,13 @@ function BarreJeu() {
       </div>
       <div className="commandes">
         <button type="button" className="on" onClick={() => s.set({ dialogue: true })} title="Nouvelle partie : draft, libre ou position (N)">Nouvelle partie</button>
-        {mode === "jeu" ? (
+        <button type="button" onClick={() => { s.set({ historique: true }); void s.chargerParties(); }}
+          title="Parties jouées et en cours : reprendre ou revoir">Parties</button>
+        {mode === "jeu" && <BasculeAides />}
+        {mode === "jeu" ? (aides && (
           <button type="button" className={analyse ? "on" : ""} onClick={s.basculerAnalyse} aria-pressed={analyse}
             title="Analyse de la position affichée par le réseau entraîné (A)">Analyse</button>
-        ) : (
+        )) : (
           <button type="button" onClick={() => s.set({ mode: "jeu" })} title="Quitter l'éditeur (E)">Retour à la partie</button>
         )}
       </div>
@@ -289,7 +321,7 @@ function PlateauJeu() {
   const caseChoisie = useJeu(s => s.caseChoisie);
   const survol = useJeu(s => s.survol);
   const attente = useJeu(s => s.attente);
-  const analyse = useJeu(s => s.analyse);
+  const analyse = useAnalyseActive();
   const fleche = useJeu(s => s.fleche);
   const a = useJeu(s => s.analyses[s.pos]);
   const { tous, filtres } = useCoups();
@@ -331,6 +363,12 @@ function PlateauJeu() {
   );
 }
 
+const PILOTAGES: [Pilotage, string, string][] = [
+  ["auto", "IA : dès son tour", "L'IA joue dès que c'est son tour, même si vous regardez un coup passé : la partie continue pendant que vous analysez"],
+  ["affichage", "IA : position actuelle", "L'IA attend que la position actuelle soit affichée : revenir sur un coup passé met la partie en attente"],
+  ["demande", "IA : sur demande", "L'IA ne joue que lorsque vous cliquez « Coup de l'IA » (ou Espace)"],
+];
+
 function Navigation() {
   const n = useJeu(s => s.images.length - 1);
   const pos = useJeu(s => s.pos);
@@ -340,17 +378,25 @@ function Navigation() {
   const vitesse = useJeu(s => s.vitesse);
   const fini = useJeu(s => s.fini);
   const hybride = useJeu(s => s.hybride);
+  const pilotage = useJeu(s => s.pilotage);
+  const ia = useJeu(s => s.ia);
+  const occupe = useJeu(s => s.occupe);
+  const panne = useJeu(s => s.panne);
   const s = useJeu.getState();
   if (!img) return null;
   const seule = joueurs.every(j => j.type === "ia");
   const humains = joueurs.some(j => j.type === "humain");
+  const avecIA = joueurs.some(j => j.type === "ia");
+  // l'IA a le trait mais le pilote ne la fera pas jouer : on peut la faire jouer à la main
+  const enAttente = ia && !fini && (pilotage === "demande" || (seule && !lecture) || (pilotage === "affichage" && pos < n) || panne);
   return (
     <div className="lecteur">
       <div className="boutons">
         <button type="button" onClick={() => s.aller(0)} title="Début (Origine)" aria-label="Début">⏮</button>
         <button type="button" onClick={() => s.pas(-1)} title="Décision précédente (←)" aria-label="Décision précédente">◀</button>
-        {seule && !fini && (
-          <button type="button" className="principal" onClick={() => s.set({ lecture: !lecture, pos: lecture ? pos : n })}>
+        {seule && !fini && pilotage !== "demande" && (
+          <button type="button" className="principal"
+            onClick={() => s.set({ lecture: !lecture, panne: false, ...(pilotage === "affichage" && !lecture ? { pos: n } : {}) })}>
             {lecture ? "Pause" : "Lecture"}
           </button>
         )}
@@ -360,7 +406,7 @@ function Navigation() {
       <div className="temps">
         <input
           type="range" min={0} max={n} value={pos} aria-label="Position dans la partie"
-          onChange={e => { s.aller(+e.target.value); if (seule) s.set({ lecture: false }); }}
+          onChange={e => s.aller(+e.target.value)}
           style={{ "--p": `${n ? (100 * pos) / n : 0}%` } as React.CSSProperties}
         />
         <div className="compteurs">
@@ -368,15 +414,28 @@ function Navigation() {
           <span>Décision <b>{pos}</b> / {n}</span>
         </div>
       </div>
-      {seule && (
-        <select value={vitesse} onChange={e => { s.set({ vitesse: +e.target.value }); }} aria-label="Vitesse de l'IA">
-          {[[1500, "Lent"], [700, "Normal"], [250, "Rapide"], [30, "Éclair"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-        </select>
+      {avecIA && !fini && (
+        <div className="pilotage">
+          <select value={pilotage} onChange={e => s.setPilotage(e.target.value as Pilotage)} aria-label="Quand l'IA joue"
+            title={PILOTAGES.find(p => p[0] === pilotage)?.[2]}>
+            {PILOTAGES.map(([v, l, t]) => <option key={v} value={v} title={t}>{l}</option>)}
+          </select>
+          {seule && pilotage !== "demande" && (
+            <select value={vitesse} onChange={e => { s.set({ vitesse: +e.target.value }); sauverPrefs(); }} aria-label="Vitesse de l'IA">
+              {[[1500, "Lent"], [700, "Normal"], [250, "Rapide"], [30, "Éclair"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          )}
+          {enAttente && (
+            <button type="button" className="on" disabled={occupe} onClick={() => { s.set({ panne: false }); void s.coupIA(); }}
+              title="Faire jouer à l'IA sa prochaine décision (Espace)">Coup de l'IA</button>
+          )}
+        </div>
       )}
       {pos < n ? (
         <button type="button" className="reprendre" onClick={() => s.revenir(pos)}
-          title="Effacer la suite et reprendre la partie depuis la position affichée">Reprendre d'ici</button>
-      ) : humains ? (
+          title={fini ? "Partie terminée : rejouer depuis la position affichée dans une nouvelle partie (variante)"
+            : "Effacer la suite et reprendre la partie depuis la position affichée"}>{fini ? "Variante d'ici" : "Reprendre d'ici"}</button>
+      ) : humains && !fini ? (
         hybride ? (
           <button type="button" onClick={s.annuler} title="Annuler la dernière saisie : coup du joueur plateau (et réponse de l'IA), ou pioche en cours">Annuler la saisie</button>
         ) : (
@@ -400,11 +459,12 @@ function Scene() {
   const mainsVisibles = useJeu(s => s.mainsVisibles);
   const fini = useJeu(s => s.fini);
   const hybride = useJeu(s => s.hybride);
+  const aides = useAides();
   if (!decor || !img) return <div className="scene"><div className="attente-partie">Préparation de la partie…</div></div>;
   const colonne = (j: number) => {
     const actif = vivant && humain && img.t === j && !attente;
     // un seul humain : la main de l'IA est cachée, sauf à la révéler (l'analyse devient omnisciente)
-    const mainIA = !fini && !hybride && joueurs[j]?.type === "ia" && joueurs.filter(x => x.type === "humain").length === 1;
+    const mainIA = aides && !fini && !hybride && joueurs[j]?.type === "ia" && joueurs.filter(x => x.type === "humain").length === 1;
     return (
       <div className="colonne-joueur">
         <Joueur decor={decor} image={img} joueur={j} nom="" role={joueurs[j]?.nom}
@@ -416,7 +476,7 @@ function Scene() {
             else st.choisirPiece(c);
           } : undefined} choisie={actif ? piece : null}
           attente={vivant && img.t === j && pieceAttente ? pieceAttente : null}
-          conseil={vivant && img.tir && conseil?.joueur === j ? conseil : null}
+          conseil={aides && vivant && img.tir && conseil?.joueur === j ? conseil : null}
           mains={mainIA ? { visibles: mainsVisibles, basculer: () => useJeu.getState().reglages({ mains_visibles: !mainsVisibles }) } : undefined} />
       </div>
     );
@@ -562,8 +622,10 @@ function ListeCoups() {
 }
 
 function PanneauCote() {
-  const onglet = useJeu(s => s.onglet);
+  const onglet0 = useJeu(s => s.onglet);
   const hybride = useJeu(s => s.hybride);
+  const aides = useAides();
+  const onglet = aides ? onglet0 : "coups";
   const n = useCoups().tous.length;
   const s = useJeu.getState();
   return (
@@ -572,9 +634,11 @@ function PanneauCote() {
         <button role="tab" aria-selected={onglet === "coups"} className={onglet === "coups" ? "on" : ""} onClick={() => s.set({ onglet: "coups" })}>
           {hybride ? "Saisie" : "Vos coups"} <span className="n">{n || ""}</span>
         </button>
-        <button role="tab" aria-selected={onglet === "analyse"} className={onglet === "analyse" ? "on" : ""} onClick={() => s.set({ onglet: "analyse" })}>
-          Analyse
-        </button>
+        {aides && (
+          <button role="tab" aria-selected={onglet === "analyse"} className={onglet === "analyse" ? "on" : ""} onClick={() => s.set({ onglet: "analyse" })}>
+            Analyse
+          </button>
+        )}
       </div>
       {onglet === "coups" ? <ListeCoups /> : <Analyse />}
     </aside>
@@ -598,7 +662,7 @@ export function PageJouer() {
   const mode = useJeu(s => s.mode);
   const erreur = useJeu(s => s.erreur);
   const info = useJeu(s => s.info);
-  const analyse = useJeu(s => s.analyse);
+  const analyse = useAnalyseActive();
   const demarre = useRef(false);
   usePilote();
   useAnalyseAuto();
@@ -625,6 +689,7 @@ export function PageJouer() {
       </main>
       {mode === "jeu" && analyse && <footer className="bas"><CourbeEval /></footer>}
       <DialogueNouvelle />
+      <DialogueParties />
       {erreur ? <div className="toast" role="alert">{erreur}</div> : info && <div className="toast info" role="status">{info}</div>}
     </div>
   );

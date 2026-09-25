@@ -390,6 +390,40 @@ code { font-family: var(--mono); }
 .lieu-partie { margin-bottom: 0.7rem; }
 .lieu-partie + .explication { margin: -0.3rem 0 0.7rem; }
 
+/* aides de jeu, pilotage de l'IA */
+.bascule.aides { align-items: center; }
+.bascule.aides .lib { font-size: 0.8rem; color: var(--texte-3); text-transform: uppercase; letter-spacing: 0.05em; margin-right: 0.45rem; }
+.bascule.aides > .lib + button { border-radius: 0.4rem 0 0 0.4rem; border-left: 1px solid var(--bord); }
+.bascule.aides button { font-size: 0.9rem; padding: 0.3rem 0.6rem; }
+.pilotage { display: flex; align-items: center; gap: 0.4rem; }
+.pilotage select { font-size: 0.85rem; }
+
+/* historique des parties */
+.dialogue.historique { width: min(64rem, calc(100vw - 2rem)); }
+.liste-parties { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; max-height: 60vh; overflow-y: auto; scrollbar-width: thin; }
+.liste-parties li { display: flex; gap: 0.3rem; align-items: stretch; }
+.liste-parties .ouvrir {
+  flex: 1; min-width: 0; display: grid; grid-template-columns: 7.5rem minmax(0, 1.4fr) minmax(0, 1.2fr) 10rem 6.5rem 5.5rem;
+  gap: 0.6rem; align-items: center; text-align: left; background: var(--fond-2); padding: 0.45rem 0.7rem;
+}
+.liste-parties .ouvrir:hover { border-color: var(--or); background: #1f3a31; }
+.liste-parties li.courante .ouvrir { border-color: var(--or-2); }
+.liste-parties .quand, .liste-parties .nb { font-size: 0.85rem; color: var(--texte-3); font-variant-numeric: tabular-nums; }
+.liste-parties .qui, .liste-parties .mise-p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.liste-parties .qui b.e0 { color: var(--or); }
+.liste-parties .qui b.e1 { color: var(--e1-bord); }
+.liste-parties .contre { color: var(--texte-3); font-size: 0.85rem; }
+.liste-parties .mise-p { font-size: 0.85rem; color: var(--texte-2); }
+.liste-parties .etat { font-size: 0.9rem; font-weight: 700; }
+.liste-parties .etat.cours { color: var(--ok); }
+.liste-parties .etat.e0 { color: var(--or); }
+.liste-parties .etat.e1 { color: var(--e1-bord); }
+.liste-parties .suppr { padding: 0 0.7rem; font-size: 1.1rem; color: var(--texte-3); }
+.liste-parties .confirmer { display: flex; gap: 0.3rem; }
+button.danger { background: rgba(224, 96, 74, 0.25); border-color: var(--attaque); }
+.historique .vide { color: var(--texte-3); }
+.garde code { max-width: 60rem; color: var(--attaque); white-space: pre-wrap; }
+
 /* liste des coups */
 .filtre-coups { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.9rem; color: var(--texte-2); margin-bottom: 0.4rem; }
 .filtre-coups b { color: var(--texte); }

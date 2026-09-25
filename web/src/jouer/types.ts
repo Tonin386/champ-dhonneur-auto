@@ -85,7 +85,7 @@ export interface Analyse {
   score?: number;
   texte?: string;
   appreciation?: [string, string];
-  coups: CoupAnalyse[];
+  coups?: CoupAnalyse[]; // absent des anciennes réponses « indisponible »
   mat?: { equipe: number; coups: number; coup: string | null } | null;
   indisponible?: string;
   fini?: string;

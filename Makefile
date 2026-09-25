@@ -55,7 +55,7 @@ front-dev: ; cd web && npm run dev
 
 # ---- entraînement continu en arrière-plan + interface web (spectateur) -----------------------
 continu: wheels debs vendor front
-	mkdir -p runs
+	mkdir -p runs parties
 	docker compose --profile continu up -d --build
 continu-arret:
 	docker compose --profile continu stop
@@ -71,7 +71,7 @@ test: ; pytest -q
 web: ; champ serveur --port 8000
 console: ; champ jouer --blanc humain --noir mcts --unites premiere
 arene: ; champ arene mcts glouton --parties 20
-docker: ; docker compose build test && docker compose up web
+docker: ; mkdir -p parties && docker compose build test && docker compose up web
 test-ia: ; champ entrainer --config configs/test.json --dossier runs/test
 entrainer: ; champ entrainer --config configs/rtx-a5000-laptop.json
 banc: ; champ banc --config configs/rtx-a5000-laptop.json

@@ -372,7 +372,10 @@ export function PanneauPosition() {
     const pos = versPosition(ed, regles);
     const js: JoueurCfg[] = analyse ? joueurs.map(j => ({ ...j, type: "humain" as const })) : joueurs;
     const ok = await useJeu.getState().nouvelle({ joueurs: js, hybride: hybride && !analyse }, pos);
-    if (ok && analyse && !useJeu.getState().analyse) useJeu.getState().basculerAnalyse();
+    if (ok && analyse) {
+      useJeu.getState().set({ aides: true });      // demande explicite d'analyse : aides affichées
+      if (!useJeu.getState().analyse) useJeu.getState().basculerAnalyse();
+    }
   };
   const bascule = (valeur: number, f: (v: number) => void, nom: string) => (
     <div className="bascule" role="radiogroup" aria-label={nom}>

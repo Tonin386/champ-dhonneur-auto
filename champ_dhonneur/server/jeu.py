@@ -10,6 +10,11 @@ On saisit les pioches de l'IA (pièces tirées de son sac) et les coups du joueu
 main : ses coups sont « libres » (toute pièce qu'il pourrait avoir) et sa main reste fictive.
 L'historique est alors une suite d'étapes (coup concret, pioches saisies de l'IA).
 
+Historique : chaque partie jouée (au moins une décision) est enregistrée dans $CHAMP_PARTIES
+(par défaut ./parties), un fichier JSON par partie réécrit à chaque coup : mise en place,
+joueurs, décisions et pioches saisies. Une partie absente de la mémoire (serveur redémarré,
+page rechargée) est relue depuis ce fichier et rejouée à l'identique.
+
 Une partie est un `Film` (le même format d'images que le spectateur) prolongé coup par coup ;
 le navigateur ne reçoit que les images qui lui manquent. Revenir en arrière rejoue la partie
 depuis sa position de départ (position initiale ou position de l'éditeur).
@@ -21,9 +26,12 @@ l'information du joueur humain.
 from __future__ import annotations
 
 import importlib.util
+import json
+import logging
 import os
 import re
 import threading
+import time
 import uuid
 from collections import Counter
 from pathlib import Path
@@ -42,6 +50,9 @@ from ..units import BATTLES, DRAFT_POOL, FIRST_GAME, UNITS
 from .spectateur import RUNS, Film
 
 router = APIRouter(prefix="/api/jeu")
+PARTIES = Path(os.environ.get("CHAMP_PARTIES", "parties"))
+FORMAT_PARTIE = 1
+_journal = logging.getLogger(__name__)
 
 # armées toutes faites du mode libre (livret p.5 et p.14-15)
 MODELES_ARMEES = {"Première partie": FIRST_GAME, "Gaugamèles": BATTLES["gaugameles"],
@@ -115,6 +126,7 @@ class Jouer(BaseModel):
 
 class Revenir(BaseModel):
     pos: int
+    copie: bool = False             # reprendre dans une nouvelle partie (variante), l'originale intacte
 
 
 class Piocher(BaseModel):
@@ -128,7 +140,11 @@ class Reglages(BaseModel):
 
 class Session:
     def __init__(self, depart: Game, joueurs: list[Joueur], mise: dict, mains_visibles: bool,
-                 hybride: bool = False):
+                 hybride: bool = False, recette: dict | None = None, tolerant: bool = False):
+        self.id = uuid.uuid4().hex[:10]
+        self.cree = time.time()
+        # comment reconstruire la position de départ : {"setup": …} ou {"position": …, "graine": …}
+        self.recette = recette or {"setup": depart.setup}
         self.mise = mise                    # mise en place : {"mode", "libelle"}
         self.edite = mise["mode"] == "position"
         self.mains_visibles = mains_visibles
@@ -139,7 +155,7 @@ class Session:
         self.version = 0
         self.lock = threading.Lock()
         self.bots: dict[int, object] = {}
-        self.regler(joueurs)
+        self.regler(joueurs, tolerant)
         self._depart = depart.copy()
         self.initial: list[str] | None = None   # hybride : première main de l'IA, saisie
         if hybride and not depart.in_draft and not self.edite:
@@ -158,7 +174,9 @@ class Session:
             piocher_initial(g, self.ia, self.initial)
         return g
 
-    def regler(self, joueurs: list[Joueur]) -> None:
+    def regler(self, joueurs: list[Joueur], tolerant: bool = False) -> None:
+        """Joueurs et bots IA. `tolerant` (partie relue de l'historique) : une IA impossible à
+        recréer (modèle disparu, PyTorch absent) laisse la partie consultable, sans bot."""
         if len(joueurs) != 2 or any(j.type not in ("humain", "ia") for j in joueurs):
             raise HTTPException(400, "Deux joueurs attendus, humains ou IA")
         if self.hybride:
@@ -169,25 +187,36 @@ class Session:
             self.ia = next(i for i, j in enumerate(joueurs) if j.type == "ia")
             self.plateau = 1 - self.ia
         ia = [j for j in joueurs if j.type == "ia"]
-        if ia and not torch_present():
+        if ia and not torch_present() and not tolerant:
             raise HTTPException(400, "IA indisponible : PyTorch n'est pas installé (image Docker « ia »)")
         bots = {}
         for i, j in enumerate(joueurs):
             if j.type != "ia":
                 continue
-            j.modele = _modele_valide(j.modele)
             j.niveau = max(16, min(3200, j.niveau))
-            ancien = self.bots.get(i)
-            if ancien is not None and getattr(ancien, "_spec", None) == (j.niveau, j.modele):
-                bots[i] = ancien
-                continue
-            from ..bots.neural import NeuralBot
             try:
-                b = NeuralBot(modele=j.modele, simulations=j.niveau, seed=i)
-            except (FileNotFoundError, ValueError) as e:
-                raise HTTPException(400, f"IA indisponible : {e}")
-            b._spec = (j.niveau, j.modele)
-            bots[i] = b
+                if not torch_present():
+                    raise HTTPException(400, "PyTorch absent")
+                try:
+                    j.modele = _modele_valide(j.modele)
+                except HTTPException:
+                    if not tolerant:
+                        raise
+                    j.modele = None               # modèle disparu : meilleur modèle actuel
+                ancien = self.bots.get(i)
+                if ancien is not None and getattr(ancien, "_spec", None) == (j.niveau, j.modele):
+                    bots[i] = ancien
+                    continue
+                from ..bots.neural import NeuralBot
+                try:
+                    b = NeuralBot(modele=j.modele, simulations=j.niveau, seed=i)
+                except (FileNotFoundError, ValueError) as e:
+                    raise HTTPException(400, f"IA indisponible : {e}")
+                b._spec = (j.niveau, j.modele)
+                bots[i] = b
+            except HTTPException:
+                if not tolerant:
+                    raise
         self.joueurs = joueurs
         self.bots = bots
 
@@ -332,6 +361,82 @@ class Session:
         return g
 
 
+    # ---- historique des parties (fichier JSON par partie)
+    def donnees(self) -> dict:
+        g = self.game
+        att = None
+        if self.attente is not None:
+            att = {"action": _action_json(self.attente["action"]), "tirages": self.attente["tirages"],
+                   "joueur": self.attente["joueur"], "coup": self.attente["coup"]}
+        return {
+            "format": FORMAT_PARTIE, "id": self.id, "cree": self.cree, "maj": time.time(),
+            "depart": self.recette, "joueurs": [j.model_dump() for j in self.joueurs],
+            "mise": self.mise, "hybride": self.hybride, "mains_visibles": self.mains_visibles,
+            "initial": self.initial, "actions": [_action_json(a) for a in self.actions],
+            "tirages": self.tirages, "attente": att,
+            "resume": {"noms": [self.nom(j) for j in self.joueurs], "types": [j.type for j in self.joueurs],
+                       "fini": g.done, "resultat": g.result_label(), "manche": g.round,
+                       "decisions": len(self.actions), "trait": g.to_move},
+        }
+
+    def enregistrer(self) -> None:
+        """Réécrit le fichier de la partie (dès sa première décision). Sans effet si le dossier
+        n'est pas accessible en écriture (la partie continue, seulement en mémoire)."""
+        if not self.actions and not self.initial:
+            return
+        try:
+            PARTIES.mkdir(parents=True, exist_ok=True)
+            tmp = PARTIES / f".{self.id}.json.tmp"
+            tmp.write_text(json.dumps(self.donnees(), ensure_ascii=False), encoding="utf-8")
+            tmp.replace(PARTIES / f"{self.id}.json")
+        except OSError as e:
+            _journal.warning("Historique des parties : écriture impossible dans %s (%s)", PARTIES, e)
+
+    @classmethod
+    def restaurer(cls, d: dict) -> "Session":
+        """Partie relue de l'historique : rejoue ses décisions depuis la même position de départ."""
+        r = d["depart"]
+        g = depuis_position(r["position"], r["graine"]) if "position" in r else Game(**r["setup"])
+        s = cls(g, [Joueur(**j) for j in d["joueurs"]], d["mise"], d.get("mains_visibles", False),
+                d.get("hybride", False), recette=r, tolerant=True)
+        s.id, s.cree = d["id"], d.get("cree", time.time())
+        if d.get("initial") is not None:
+            s.initial = list(d["initial"])
+        s.actions = [_action(a) for a in d["actions"]]
+        s.tirages = [list(t) for t in d.get("tirages") or [[] for _ in s.actions]]
+        s.film = s._rejouer(len(s.actions))
+        att = d.get("attente")
+        if att is not None:
+            try:
+                s._poursuivre({"action": _action(att["action"]), "tirages": list(att["tirages"]),
+                               "joueur": att["joueur"], "coup": att["coup"]})
+            except HTTPException:
+                s.attente = None
+        return s
+
+    def copie(self, n: int) -> "Session":
+        """Nouvelle partie reprenant les n premières décisions (variante) ; celle-ci reste intacte."""
+        d = self.donnees()
+        d.update(id=uuid.uuid4().hex[:10], cree=time.time(), attente=None,
+                 actions=d["actions"][:n], tirages=d["tirages"][:n],
+                 mise=dict(self.mise, libelle=self.mise["libelle"].removesuffix(" · variante") + " · variante"))
+        return Session.restaurer(d)
+
+
+def _action_json(a: Action) -> list:
+    return [a.kind, a.coin, a.unit, list(a.cells), a.extra]
+
+
+def _action(l: list) -> Action:
+    return Action(l[0], l[1], l[2], tuple(l[3]), l[4])
+
+
+def _fichier(gid: str) -> Path:
+    if not re.fullmatch(r"[0-9a-f]{10}", gid):
+        raise HTTPException(404, "Partie introuvable")
+    return PARTIES / f"{gid}.json"
+
+
 def _decrire(g: Game, a: Action) -> str:
     if a.coin == CACHEE:
         return describe(g, a._replace(coin=None)) + " (pièce cachée)"
@@ -350,10 +455,27 @@ def nom_joueur(j: Joueur) -> str:
 
 
 def session(gid: str) -> Session:
+    """Partie en mémoire, sinon relue de l'historique."""
     s = SESSIONS.get(gid)
     if s is None:
-        raise HTTPException(404, "Partie introuvable (le serveur a peut-être redémarré)")
+        f = _fichier(gid)
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise HTTPException(404, "Partie introuvable")
+        try:
+            s = Session.restaurer(d)
+        except Exception as e:  # noqa: BLE001 — fichier d'une version incompatible ou abîmé
+            _journal.exception("Partie %s illisible", gid)
+            raise HTTPException(400, f"Partie enregistrée illisible : {e}")
+        _memoriser(s)
     return s
+
+
+def _memoriser(s: Session) -> None:
+    SESSIONS[s.id] = s
+    while len(SESSIONS) > 200:
+        SESSIONS.pop(next(iter(SESSIONS)))
 
 
 # ------------------------------------------------------------------ état envoyé au navigateur
@@ -482,12 +604,38 @@ def nouvelle(req: Nouvelle):
     g, mise = mise_en_place(req)
     if req.hybride:
         mise = dict(mise, libelle="Plateau réel · " + mise["libelle"])
-    s = Session(g, req.joueurs, mise, req.mains_visibles, req.hybride)
-    s.id = uuid.uuid4().hex[:10]
-    SESSIONS[s.id] = s
-    while len(SESSIONS) > 200:
-        SESSIONS.pop(next(iter(SESSIONS)))
+    recette = {"position": req.position, "graine": g.seed} if req.position is not None else None
+    s = Session(g, req.joueurs, mise, req.mains_visibles, req.hybride, recette)
+    _memoriser(s)
     return etat(s)
+
+
+@router.get("/parties")
+def parties():
+    """Historique : parties enregistrées (au moins une décision), les plus récentes d'abord."""
+    out = []
+    if PARTIES.is_dir():
+        for f in PARTIES.glob("*.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            out.append({"id": d["id"], "cree": d.get("cree"), "maj": d.get("maj"), "mise": d["mise"]["libelle"],
+                        "hybride": d.get("hybride", False), **d.get("resume", {})})
+    out.sort(key=lambda p: -(p.get("maj") or 0))
+    return {"parties": out, "dossier": str(PARTIES.resolve()),
+            "ecriture": os.access(PARTIES if PARTIES.is_dir() else PARTIES.parent, os.W_OK)}
+
+
+@router.delete("/parties/{gid}")
+def supprimer_partie(gid: str):
+    f = _fichier(gid)
+    SESSIONS.pop(gid, None)
+    try:
+        f.unlink()
+    except FileNotFoundError:
+        raise HTTPException(404, "Partie introuvable")
+    return {"ok": True}
 
 
 @router.get("/{gid}")
@@ -513,6 +661,7 @@ def jouer(gid: str, req: Jouer, depuis: int = 0, version: int = -1):
         if s.hybride:
             a = concretiser(g.copy(), g.to_move, a)   # pièce fictive, choisie sans toucher la partie
         s.jouer_etape(a)
+        s.enregistrer()
         return etat(s, depuis, version)
 
 
@@ -523,7 +672,10 @@ def coup_ia(gid: str, depuis: int = 0, version: int = -1):
     with s.lock:
         g = s.game
         if not g.done and s.joueurs[g.to_move].type == "ia" and not (s.hybride and s.requis()):
+            if g.to_move not in s.bots:
+                raise HTTPException(400, "IA indisponible sur ce serveur : la partie reste consultable")
             s.jouer_etape(s.bots[g.to_move].choose(g))
+            s.enregistrer()
         return etat(s, depuis, version)
 
 
@@ -535,6 +687,7 @@ def tirage(gid: str, req: Piocher, depuis: int = 0, version: int = -1):
         raise HTTPException(400, "Pioches saisies : partie hybride seulement")
     with s.lock:
         s.piocher(req.piece)
+        s.enregistrer()
         return etat(s, depuis, version)
 
 
@@ -544,6 +697,7 @@ def tirage_annuler(gid: str, depuis: int = 0, version: int = -1):
     s = session(gid)
     with s.lock:
         s.recommencer_pioche()
+        s.enregistrer()
         return etat(s, depuis, version)
 
 
@@ -552,7 +706,13 @@ def revenir(gid: str, req: Revenir):
     """Reprend la partie après `pos` décisions (les suivantes sont effacées)."""
     s = session(gid)
     with s.lock:
+        if req.copie:
+            v = s.copie(max(0, min(req.pos, len(s.actions))))
+            _memoriser(v)
+            v.enregistrer()
+            return etat(v)
         s.revenir(req.pos)
+        s.enregistrer()
         return etat(s)
 
 
@@ -564,9 +724,11 @@ def annuler(gid: str):
         if s.attente is not None:
             att, s.attente = s.attente, None
             if att["joueur"] != s.ia:           # coup du joueur plateau pas encore validé : abandonné
+                s.enregistrer()
                 return etat(s)
         if s.hybride and not s.actions and s.initial:
             s.recommencer_pioche()               # première main de l'IA à saisir de nouveau
+            s.enregistrer()
             return etat(s)
         g = s.depart()
         dernier = None
@@ -578,6 +740,7 @@ def annuler(gid: str):
         if dernier is None:
             dernier = max(0, len(s.actions) - 1)
         s.revenir(dernier)
+        s.enregistrer()
         return etat(s)
 
 
@@ -591,6 +754,7 @@ def reglages(gid: str, req: Reglages):
         if req.mains_visibles is not None and not s.hybride:
             s.mains_visibles = req.mains_visibles
         s.version += 1
+        s.enregistrer()
         return etat(s)
 
 
@@ -651,6 +815,7 @@ def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: st
                     score=0.0 if g.winner is None else (99.9 if g.winner == 0 else -99.9),
                     gain_or=0.5 if g.winner is None else float(g.winner == 0))
     if g.to_move in masques:
+        base["coups"] = []
         if s.hybride:
             return dict(base, indisponible="Main du joueur plateau inconnue : l'analyse, vue par l'IA, "
                                            "reprend à son tour.")

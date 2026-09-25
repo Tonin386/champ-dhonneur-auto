@@ -101,10 +101,21 @@ en haut) :
   que de ce qu'un joueur assis à sa place saurait ; voir [docs/HYBRIDE.md](docs/HYBRIDE.md) ;
 - **jeu** : cliquer une pièce de la main puis une case en surbrillance, ou un coup de la liste ;
   « Annuler mon coup », parcours de la partie (← →) et « Reprendre d'ici » pour rejouer une autre
-  suite ;
+  suite (sur une partie terminée : « Variante d'ici », qui laisse l'originale intacte) ;
+- **quand l'IA joue** : dès son tour (la partie continue même si l'on s'arrête sur un coup passé
+  pour l'analyser), seulement quand la position actuelle est affichée, ou sur demande (« Coup de
+  l'IA », Espace) ;
+- **aides de jeu** : dès qu'un humain joue, les aides à la décision (évaluation, meilleurs coups
+  et flèche, victoires forcées, valeur des cartes du draft, main de l'IA) sont **masquées par
+  défaut** à chaque partie ; le bouton « Aides » de la barre du haut les affiche. Sans joueur
+  humain (IA contre IA), elles sont toujours disponibles ;
 - **analyse** (A) : le réseau évalue la position affichée, à tout moment de la partie, avec une
   barre d'évaluation, ses meilleurs coups et la suite qu'il attend, et une courbe de l'évaluation.
   Face à l'IA, l'analyse n'utilise que l'information du joueur humain ;
+- **parties** : chaque partie (dès sa première décision) est enregistrée dans `./parties`
+  (`CHAMP_PARTIES`, un fichier JSON par partie) ; la fenêtre « Parties » liste les parties en
+  cours et terminées, à reprendre, revoir ou supprimer. Recharger la page reprend la partie
+  affichée, même après un redémarrage du serveur ;
 - **éditeur de position** (E) : unités de chaque camp, pièces sur le plateau, marqueurs, main,
   sac, défausses, réserve, trait et initiative ; puis « Jouer à partir d'ici » ou « Analyser ».
 

@@ -21,3 +21,6 @@ runs/
 archives/
 data/
 modeles/*.pt
+
+# historique des parties de la page « Jouer » (CHAMP_PARTIES)
+parties/

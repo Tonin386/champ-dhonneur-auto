@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EQUIPE } from "../jeu";
-import { useJeu } from "./store";
+import { sauverPrefs, useAnalyseActive, useJeu } from "./store";
 import type { Analyse as TAnalyse } from "./types";
 
 /** Texte principal, détail et couleur d'une évaluation (point de vue d'Or : + Or, − Argent). */
@@ -30,7 +30,7 @@ function useEvalAffichee(): TAnalyse | null {
 
 /** Barre verticale à gauche du plateau : Argent en haut, Or en bas (comme sur le plateau). */
 export function BarreEval() {
-  const analyse = useJeu(s => s.analyse);
+  const analyse = useAnalyseActive();
   const a = useEvalAffichee();
   if (!analyse) return null;
   const or = a?.gain_or ?? 0.5;
@@ -70,6 +70,7 @@ export function Analyse() {
     );
   }
   const txt = a ? libelleScore(a) : null;
+  const coups = a?.coups ?? [];   // réponse « indisponible » : pas de coups
   return (
     <div className="analyse">
       <div className="tete-analyse">
@@ -93,11 +94,11 @@ export function Analyse() {
           </select>
         </label>
         <label className="case-a-cocher">
-          <input type="checkbox" checked={fleche} onChange={e => s.set({ fleche: e.target.checked })} /> Flèche du meilleur coup
+          <input type="checkbox" checked={fleche} onChange={e => { s.set({ fleche: e.target.checked }); sauverPrefs(); }} /> Flèche du meilleur coup
         </label>
       </div>
       <ol className="meilleurs">
-        {(a?.coups ?? []).map((c, k) => (
+        {coups.map((c, k) => (
           <li key={k}>
             <button type="button" disabled={!(humain && vivant)}
               title={humain && vivant ? "Jouer ce coup" : c.description}
@@ -111,7 +112,7 @@ export function Analyse() {
             </button>
           </li>
         ))}
-        {a && !a.coups.length && !a.fini && !a.indisponible && <li className="vide">Aucun coup à proposer.</li>}
+        {a && !coups.length && !a.fini && !a.indisponible && <li className="vide">Aucun coup à proposer.</li>}
       </ol>
       <Legende />
     </div>
