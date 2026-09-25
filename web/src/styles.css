@@ -365,6 +365,31 @@ code { font-family: var(--mono); }
 .piochee .piece { box-shadow: 0 0 0 0.2rem var(--attaque); }
 .chronique li.apres { opacity: 0.45; }
 
+/* partie hybride : pioche de l'IA, pièce jouée par le joueur plateau, coups à reproduire */
+.pioche-ia-p { display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.95rem; color: var(--texte-2); }
+.pioche-ia-p h3 { margin: 0; font: 400 1.25rem var(--titre); color: var(--texte); }
+.pioche-ia-p p { margin: 0; }
+.pioche-ia-p b { color: var(--texte); }
+.coup-declencheur { padding: 0.45rem 0.6rem; border-radius: 0.5rem; background: var(--fond-2); border: 1px solid var(--bord); }
+.coup-declencheur.ia { border-color: var(--or); color: var(--texte); }
+.coup-declencheur code { color: var(--or); margin-right: 0.3rem; }
+.alerte-sac { padding: 0.45rem 0.6rem; border-radius: 0.5rem; background: rgba(224, 96, 74, 0.12); border: 1px solid rgba(224, 96, 74, 0.5); color: #f3c1b6; }
+.sac-ia { display: grid; grid-template-columns: repeat(auto-fill, minmax(5.2rem, 1fr)); gap: 0.4rem; }
+.sac-ia button { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; padding: 0.45rem 0.3rem; background: var(--fond-2); }
+.sac-ia button:hover:not(:disabled) { border-color: var(--or); background: #1f3a31; }
+.sac-ia .nb { font-weight: 700; color: var(--texte); font-variant-numeric: tabular-nums; }
+.sac-ia .nom { font-size: 0.75rem; color: var(--texte-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.deja { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; font-size: 0.85rem; }
+.deja button { margin-left: auto; font-size: 0.8rem; padding: 0.15rem 0.5rem; }
+.pieces-possibles { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.pieces-possibles .etiquette { font-size: 0.75rem; color: var(--texte-3); text-transform: uppercase; letter-spacing: 0.06em; margin-right: 0.3rem; }
+.invite-saisie { margin: 0 0 0.4rem; color: var(--or); font-weight: 700; }
+.a-reproduire { color: var(--texte); }
+.a-reproduire b { color: var(--or); }
+.chronique .pioche-ia { display: block; color: var(--texte-3); font-size: 0.8rem; }
+.lieu-partie { margin-bottom: 0.7rem; }
+.lieu-partie + .explication { margin: -0.3rem 0 0.7rem; }
+
 /* liste des coups */
 .filtre-coups { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.9rem; color: var(--texte-2); margin-bottom: 0.4rem; }
 .filtre-coups b { color: var(--texte); }

@@ -44,6 +44,7 @@ export interface ActionImg {
   c: number[]; // cases
   u: string | null;
   pc: string | null;
+  ti?: string[]; // partie hybride : pièces piochées par l'IA à la suite de ce coup
 }
 
 export interface Image {

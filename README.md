@@ -95,6 +95,10 @@ en haut) :
   8 cartes tirées au hasard ou choisies une à une, premier à choisir au hasard ou imposé),
   **Libre** (les deux armées de 4 unités composées à la main, ou d'après la première partie
   et les batailles historiques ; Initiative au choix) ou **Position** (l'éditeur ci-dessous) ;
+- **partie sur plateau réel (hybride)** : on joue sur la table contre l'IA. On saisit les pièces
+  tirées du sac de l'IA et les coups du joueur plateau (jamais sa main : ses coups face cachée
+  restent « pièce cachée »), puis on reproduit sur la table les coups de l'IA. L'IA ne dispose
+  que de ce qu'un joueur assis à sa place saurait ; voir [docs/HYBRIDE.md](docs/HYBRIDE.md) ;
 - **jeu** : cliquer une pièce de la main puis une case en surbrillance, ou un coup de la liste ;
   « Annuler mon coup », parcours de la partie (← →) et « Reprendre d'ici » pour rejouer une autre
   suite ;

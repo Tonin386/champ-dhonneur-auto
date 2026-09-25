@@ -16,12 +16,12 @@ export function Chronique({ film, pos, aller, complet }: Props) {
 
   const lignes = useMemo(() => {
     if (!film) return [];
-    const out: { k: number; r: number; nouvelle: boolean; e: number; n: string; d: string }[] = [];
+    const out: { k: number; r: number; nouvelle: boolean; e: number; n: string; d: string; ti?: string[] }[] = [];
     let r = -1;
     film.images.forEach((img, k) => {
       if (!img.a) return;
       const prec = film.images[k - 1];
-      out.push({ k, r: prec.r, nouvelle: prec.r !== r, e: film.decor.equipes[img.a.j], n: img.a.n, d: img.a.d });
+      out.push({ k, r: prec.r, nouvelle: prec.r !== r, e: film.decor.equipes[img.a.j], n: img.a.n, d: img.a.d, ti: img.a.ti });
       r = prec.r;
     });
     return out;
@@ -46,7 +46,7 @@ export function Chronique({ film, pos, aller, complet }: Props) {
         >
           <span className="pastille" aria-label={EQUIPE[l.e]} />
           <code>{l.n}</code>
-          <span className="desc">{l.d}</span>
+          <span className="desc">{l.d}{l.ti && <span className="pioche-ia" title="Pièces piochées par l'IA (saisies)">puis pioche de l'IA : {l.ti.join(" ")}</span>}</span>
         </li>
       ))}
       {!lignes.some(l => l.k <= pos) && <li className="vide">La partie commence…</li>}

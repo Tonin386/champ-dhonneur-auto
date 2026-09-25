@@ -723,6 +723,10 @@ class Game:
         redistribue au hasard en conservant la taille de chaque zone. Les
         propres sacs de l'observateur sont déjà aléatoires ; on réinitialise
         seulement le générateur de pioche.
+
+        Les pièces sont triées avant d'être mélangées : la copie ne dépend que de
+        l'information de l'observateur (multiensembles), pas de la répartition
+        réelle des pièces cachées ni de l'ordre des listes (voir docs/HYBRIDE.md).
         """
         rng = rng or random.Random()
         if rapide:
@@ -735,8 +739,9 @@ class Game:
         g.forced = {}
         for pl in g.players:
             if pl.idx == observer:
+                pl.bag.sort()
                 continue
-            pool = pl.bag + pl.hand + pl.disc_down
+            pool = sorted(pl.bag + pl.hand + pl.disc_down)
             rng.shuffle(pool)
             nh, nd = len(pl.hand), len(pl.disc_down)
             pl.hand = pool[:nh]

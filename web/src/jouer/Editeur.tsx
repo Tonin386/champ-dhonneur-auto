@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { Plateau } from "../components/Plateau";
 import { EQUIPE, NOMS, imgPiece } from "../jeu";
 import type { Decor, Image } from "../types";
-import { ChoixJoueur } from "./Nouvelle";
+import { ChoixJoueur, unSeulIA } from "./Nouvelle";
 import { useJeu } from "./store";
 import type { JoueurCfg, Position, Regles } from "./types";
 
@@ -106,6 +106,7 @@ interface EdStore {
   ed: Ed | null;
   outil: Outil;
   joueurs: JoueurCfg[];
+  hybride: boolean; // lancer une partie sur un vrai plateau depuis cette position
   set(p: Partial<EdStore>): void;
   maj(f: (e: Ed) => void): void;
 }
@@ -114,6 +115,7 @@ const useEd = create<EdStore>()((set, get) => ({
   ed: null,
   outil: { t: "gomme" },
   joueurs: [],
+  hybride: false,
   set: p => set(p),
   maj: f => {
     const e = structuredClone(get().ed);
@@ -331,7 +333,8 @@ export function Editeur() {
         joueurs: [0, 1].map(() => ({ main: [], sac: [], defausse: [], defausse_cachee: [], reserve: {} })) }, regles);
       positionDepart(e, regles);
     }
-    useEd.getState().set({ ed: e, joueurs: config.joueurs, outil: { t: "unite", j: 0, u: e.unites[0][0] } });
+    useEd.getState().set({ ed: e, joueurs: unSeulIA(config.joueurs, config.hybride, -1), hybride: config.hybride,
+      outil: { t: "unite", j: 0, u: e.unites[0][0] } });
   }, [editeur, regles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const decor = useMemo(() => (ed && regles ? decorDe(ed, regles) : null), [ed, regles]);
@@ -358,6 +361,7 @@ export function Editeur() {
 export function PanneauPosition() {
   const ed = useEd(s => s.ed);
   const joueurs = useEd(s => s.joueurs);
+  const hybride = useEd(s => s.hybride);
   const regles = useJeu(s => s.regles);
   const info = useJeu(s => s.infoIA);
   const [texte, setTexte] = useState("");
@@ -367,7 +371,7 @@ export function PanneauPosition() {
   const lancer = async (analyse: boolean) => {
     const pos = versPosition(ed, regles);
     const js: JoueurCfg[] = analyse ? joueurs.map(j => ({ ...j, type: "humain" as const })) : joueurs;
-    const ok = await useJeu.getState().nouvelle({ joueurs: js }, pos);
+    const ok = await useJeu.getState().nouvelle({ joueurs: js, hybride: hybride && !analyse }, pos);
     if (ok && analyse && !useJeu.getState().analyse) useJeu.getState().basculerAnalyse();
   };
   const bascule = (valeur: number, f: (v: number) => void, nom: string) => (
@@ -402,10 +406,19 @@ export function PanneauPosition() {
       {pb.length > 0 ? (
         <ul className="problemes">{pb.map(p => <li key={p}>{p}</li>)}</ul>
       ) : <p className="ok-position">Position cohérente.</p>}
+      <label className="case-a-cocher" title={info?.disponible ? "Une IA et un joueur plateau ; pièces cachées du joueur plateau : seul compte leur total par unité" : "Il faut une IA entraînée"}>
+        <input type="checkbox" checked={hybride} disabled={!info?.disponible}
+          onChange={e => useEd.getState().set({ hybride: e.target.checked, joueurs: unSeulIA(joueurs, e.target.checked, -1) })} />
+        Partie sur plateau réel (hybride)
+      </label>
+      {hybride && (
+        <p className="remarque">Joueur plateau : sa main, son sac et sa défausse cachée sont inconnus de l'IA ; seul compte le
+          nombre de pièces de chaque unité et de chaque zone.</p>
+      )}
       <div className="deux-joueurs compact">
         {joueurs.map((j, k) => (
-          <ChoixJoueur key={k} equipe={k} j={j} info={info} niveaux={regles.niveaux}
-            onChange={nj => useEd.getState().set({ joueurs: joueurs.map((x, i) => (i === k ? nj : x)) })} />
+          <ChoixJoueur key={k} equipe={k} j={j} info={info} niveaux={regles.niveaux} hybride={hybride}
+            onChange={nj => useEd.getState().set({ joueurs: unSeulIA(joueurs.map((x, i) => (i === k ? nj : x)), hybride, k) })} />
         ))}
       </div>
       <div className="actions-position">

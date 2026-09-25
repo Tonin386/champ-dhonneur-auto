@@ -5,6 +5,11 @@ Trois mises en place :
   * libre : les deux armées de 4 unités sont composées avant la partie ;
   * position : une position composée dans l'éditeur.
 
+Partie hybride (`hybride`, docs/HYBRIDE.md) : la partie se joue sur un vrai plateau contre l'IA.
+On saisit les pioches de l'IA (pièces tirées de son sac) et les coups du joueur plateau, sans sa
+main : ses coups sont « libres » (toute pièce qu'il pourrait avoir) et sa main reste fictive.
+L'historique est alors une suite d'étapes (coup concret, pioches saisies de l'IA).
+
 Une partie est un `Film` (le même format d'images que le spectateur) prolongé coup par coup ;
 le navigateur ne reçoit que les images qui lui manquent. Revenir en arrière rejoue la partie
 depuis sa position de départ (position initiale ou position de l'éditeur).
@@ -20,13 +25,16 @@ import os
 import re
 import threading
 import uuid
+from collections import Counter
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from ..engine import FACE_DOWN, Action, Game
+from ..engine import FACE_DOWN, Action, Game, IllegalAction
+from ..hybride import (CACHEE, TirageRequis, coups_libres, concretiser, essayer, pieces_possibles,
+                       piocher_initial, retirer_main)
 from ..ia.conseil import conseil_draft, dossier_valeurs, lire_valeurs
 from ..notation import action_str, describe, export_record
 from ..position import depuis_position, position
@@ -98,6 +106,7 @@ class Nouvelle(BaseModel):
     joueurs: list[Joueur] = [Joueur(), Joueur(type="ia")]
     position: dict | None = None    # position de l'éditeur
     mains_visibles: bool = False
+    hybride: bool = False           # partie sur un vrai plateau : une IA et un joueur plateau
 
 
 class Jouer(BaseModel):
@@ -108,31 +117,57 @@ class Revenir(BaseModel):
     pos: int
 
 
+class Piocher(BaseModel):
+    piece: str
+
+
 class Reglages(BaseModel):
     joueurs: list[Joueur] | None = None
     mains_visibles: bool | None = None
 
 
 class Session:
-    def __init__(self, depart: Game, joueurs: list[Joueur], mise: dict, mains_visibles: bool):
-        self.depart = depart.copy()
+    def __init__(self, depart: Game, joueurs: list[Joueur], mise: dict, mains_visibles: bool,
+                 hybride: bool = False):
         self.mise = mise                    # mise en place : {"mode", "libelle"}
         self.edite = mise["mode"] == "position"
         self.mains_visibles = mains_visibles
+        self.hybride = hybride
         self.actions: list[Action] = []
+        self.tirages: list[list[str]] = []  # hybride : pioches saisies de l'IA à chaque étape
+        self.attente: dict | None = None    # hybride : coup en attente des pioches de l'IA
         self.version = 0
         self.lock = threading.Lock()
         self.bots: dict[int, object] = {}
         self.regler(joueurs)
-        self.film = Film.depuis_partie(self.depart, self._entetes())
+        self._depart = depart.copy()
+        self.initial: list[str] | None = None   # hybride : première main de l'IA, saisie
+        if hybride and not depart.in_draft and not self.edite:
+            retirer_main(self._depart, self.ia)
+            self.initial = []
+        self.film = Film.depuis_partie(self.depart(), self._entetes())
 
     @property
     def game(self) -> Game:
         return self.film.game
 
+    def depart(self) -> Game:
+        """Position de départ (avec la première main saisie de l'IA)."""
+        g = self._depart.copy()
+        if self.initial:
+            piocher_initial(g, self.ia, self.initial)
+        return g
+
     def regler(self, joueurs: list[Joueur]) -> None:
         if len(joueurs) != 2 or any(j.type not in ("humain", "ia") for j in joueurs):
             raise HTTPException(400, "Deux joueurs attendus, humains ou IA")
+        if self.hybride:
+            if sorted(j.type for j in joueurs) != ["humain", "ia"]:
+                raise HTTPException(400, "Partie hybride : une IA et un joueur plateau")
+            if hasattr(self, "ia") and joueurs[self.ia].type != "ia":
+                raise HTTPException(400, "Partie hybride : l'IA ne change pas de camp en cours de partie")
+            self.ia = next(i for i, j in enumerate(joueurs) if j.type == "ia")
+            self.plateau = 1 - self.ia
         ia = [j for j in joueurs if j.type == "ia"]
         if ia and not torch_present():
             raise HTTPException(400, "IA indisponible : PyTorch n'est pas installé (image Docker « ia »)")
@@ -156,35 +191,151 @@ class Session:
         self.joueurs = joueurs
         self.bots = bots
 
+    def nom(self, j: Joueur) -> str:
+        return "Joueur plateau" if self.hybride and j.type == "humain" else nom_joueur(j)
+
     def _entetes(self) -> dict:
-        noms = [nom_joueur(j) for j in self.joueurs]
+        noms = [self.nom(j) for j in self.joueurs]
         return {"Type": "partie", "Blanc": noms[0], "Noir": noms[1]}
 
     def masques(self) -> set[int]:
-        """Joueurs dont la main est cachée à l'écran."""
+        """Joueurs dont la main est cachée à l'écran (hybride : celle du joueur plateau, fictive)."""
+        if self.hybride:
+            return {self.plateau}
         humains = [i for i, j in enumerate(self.joueurs) if j.type == "humain"]
         if self.mains_visibles or len(humains) != 1:
             return set()
         return {i for i in range(2) if i not in humains}
 
+    # ---- étapes : coup concret et pioches de l'IA
+    def _preparer(self, g: Game, a: Action, tirages: list[str]) -> None:
+        if self.hybride:
+            if g.to_move == self.plateau:
+                concretiser(g, self.plateau, a)
+            if tirages:
+                g.force_draws(self.ia, tirages)
+
+    def _ajouter(self, film: Film, a: Action, tirages: list[str]) -> None:
+        self._preparer(film.game, a, tirages)
+        film.ajouter(a)
+        if tirages:
+            film.images[-1]["a"]["ti"] = list(tirages)
+
+    def _rejouer(self, n: int) -> Film:
+        film = Film.depuis_partie(self.depart(), self._entetes())
+        for a, t in zip(self.actions[:n], self.tirages[:n]):
+            self._ajouter(film, a, t)
+        return film
+
+    def _valider(self, a: Action, tirages: list[str]) -> None:
+        self._ajouter(self.film, a, tirages)
+        self.actions.append(a)
+        self.tirages.append(tirages)
+        self.attente = None
+
+    def jouer_etape(self, a: Action) -> None:
+        """Joue un coup concret ; en hybride, attend d'abord les pioches de l'IA qu'il déclenche."""
+        if not self.hybride:
+            self._valider(a, [])
+            return
+        joueur = self.game.to_move
+        vu = a._replace(coin=CACHEE) if joueur == self.plateau and a.coin and a.kind in FACE_DOWN else a
+        texte = {"n": action_str(self.game, vu, hidden=False), "d": _decrire(self.game, vu), "j": joueur}
+        self._poursuivre({"action": a, "tirages": [], "joueur": joueur, "coup": texte})
+
+    def _poursuivre(self, att: dict) -> None:
+        """Essaie le coup en attente avec les pioches saisies ; complète les pioches sans choix."""
+        a = att["action"]
+        while True:
+            h = self.game.copy()
+            if h.to_move == self.plateau:
+                concretiser(h, self.plateau, a)
+            try:
+                essayer(h, a, self.ia, att["tirages"])
+            except TirageRequis as r:
+                if len(set(r.sac)) == 1:        # une seule pièce possible : pas de choix
+                    att["tirages"] = att["tirages"] + [r.sac[0]]
+                    continue
+                att["requis"] = r
+                self.attente = att
+                return
+            except IllegalAction as e:
+                raise HTTPException(400, str(e))
+            self._valider(a, att["tirages"])
+            return
+
+    # ---- première main de l'IA (hybride, hors draft et éditeur)
+    def _n_initial(self) -> int:
+        return min(3, len(self._depart.players[self.ia].bag))
+
+    def _sac_initial(self) -> list[str]:
+        sac = list(self._depart.players[self.ia].bag)
+        for c in self.initial:
+            sac.remove(c)
+        return sorted(sac)
+
+    def piocher(self, piece: str) -> None:
+        if self.initial is not None and len(self.initial) < self._n_initial():
+            if piece not in self._sac_initial():
+                raise HTTPException(400, f"{piece} n'est pas dans le sac de l'IA")
+            self.initial.append(piece)
+            while len(self.initial) < self._n_initial() and len(set(self._sac_initial())) == 1:
+                self.initial.append(self._sac_initial()[0])
+            self.film = Film.depuis_partie(self.depart(), self._entetes())
+            self.version += 1
+            return
+        if self.attente is None:
+            raise HTTPException(400, "Aucune pioche attendue")
+        r = self.attente["requis"]
+        if piece not in r.sac:
+            raise HTTPException(400, f"{piece} n'est pas dans le sac de l'IA")
+        self._poursuivre(dict(self.attente, tirages=self.attente["tirages"] + [piece]))
+
+    def recommencer_pioche(self) -> None:
+        if self.initial is not None and not self.actions:
+            self.initial = []
+            self.film = Film.depuis_partie(self.depart(), self._entetes())
+            self.version += 1
+        elif self.attente is not None:
+            self._poursuivre(dict(self.attente, tirages=[]))
+
+    def requis(self) -> dict | None:
+        """Pioche de l'IA attendue (hybride) : contexte, pièces du sac, rang."""
+        if self.initial is not None and len(self.initial) < self._n_initial():
+            return {"contexte": "initial", "sac": dict(Counter(self._sac_initial())), "melange": False,
+                    "rang": len(self.initial) + 1, "total": self._n_initial(), "choisies": list(self.initial),
+                    "coup": None}
+        if self.attente is None:
+            return None
+        r = self.attente["requis"]
+        return {"contexte": "moine" if r.moine else "manche", "sac": dict(Counter(r.sac)),
+                "melange": r.melange, "rang": r.rang, "total": r.total,
+                "choisies": list(self.attente["tirages"]), "coup": self.attente["coup"]}
+
     def revenir(self, n: int) -> None:
         """Garde les n premières décisions."""
         n = max(0, min(n, len(self.actions)))
-        film = Film.depuis_partie(self.depart, self._entetes())
-        for a in self.actions[:n]:
-            film.ajouter(a)
+        self.film = self._rejouer(n)
         self.actions = self.actions[:n]
-        self.film = film
+        self.tirages = self.tirages[:n]
+        self.attente = None
         self.version += 1
 
     def jeu_a(self, pos: int) -> Game:
         """Copie de la partie après `pos` décisions."""
         if pos >= len(self.actions):
             return self.game.copy()
-        g = self.depart.copy()
-        for a in self.actions[:pos]:
+        g = self.depart()
+        for a, t in zip(self.actions[:pos], self.tirages[:pos]):
+            self._preparer(g, a, t)
             g.apply(a)
         return g
+
+
+def _decrire(g: Game, a: Action) -> str:
+    if a.coin == CACHEE:
+        return describe(g, a._replace(coin=None)) + " (pièce cachée)"
+    return describe(g, a)
 
 
 SESSIONS: dict[str, Session] = {}
@@ -223,24 +374,37 @@ def _masquer(img: dict, masques: set[int]) -> dict:
 def etat(s: Session, depuis: int = 0, version: int = -1) -> dict:
     g = s.game
     imgs = s.film.images
-    masques = set() if g.done else s.masques()
+    # hybride : la main du joueur plateau est fictive, même en fin de partie
+    masques = s.masques() if s.hybride or not g.done else set()
     debut = min(depuis, len(imgs)) if version == s.version else 0
     tm = g.to_move
-    humain = not g.done and s.joueurs[tm].type == "humain"
+    requis = s.requis() if s.hybride else None
+    libre = not g.done and requis is None
+    humain = libre and s.joueurs[tm].type == "humain"
     legal = []
     if humain:
-        for k, a in enumerate(g.legal_actions()):
-            legal.append({"i": k, "n": action_str(g, a, hidden=False), "d": describe(g, a),
+        coups = coups_libres(g, tm) if s.hybride else g.legal_actions()
+        for k, a in enumerate(coups):
+            legal.append({"i": k, "n": action_str(g, a, hidden=False), "d": _decrire(g, a),
                           "coin": a.coin, "kind": a.kind, "cells": list(a.cells)})
+    moine = bool(humain and g.pending and g.pending[-1].kind == "priest")
+    attente = g.pending_label() if g.pending and not g.done else ""
+    if moine and s.hybride:
+        attente = "Moine soldat : pièce piochée inconnue, choisissez celle qu'il a jouée"
     out = {
         "id": s.id, "version": s.version, "debut": debut, "n": len(imgs),
         "images": [_masquer(i, masques) for i in imgs[debut:]],
-        "joueurs": [dict(j.model_dump(), nom=nom_joueur(j)) for j in s.joueurs],
-        "trait": tm, "humain": humain, "ia": not g.done and not humain,
-        "legal": legal, "attente": g.pending_label() if g.pending and not g.done else "",
-        "piece_attente": g.pending[-1].coin if humain and g.pending and g.pending[-1].kind == "priest" else None,
+        "joueurs": [dict(j.model_dump(), nom=s.nom(j)) for j in s.joueurs],
+        "trait": tm, "humain": humain, "ia": libre and not humain,
+        "legal": legal, "attente": attente,
+        "piece_attente": g.pending[-1].coin if moine and not s.hybride else None,
         "fini": g.done, "resultat": g.result_label(), "edite": s.edite, "mise": s.mise,
         "mains_visibles": s.mains_visibles, "masques": sorted(masques),
+        "hybride": {"ia": s.ia, "plateau": s.plateau} if s.hybride else None,
+        "tirage": requis,
+        # hybride : pièces que le joueur plateau pourrait jouer (information publique)
+        "possibles": dict(pieces_possibles(g, tm)) if humain and s.hybride and not g.in_draft
+        and (not g.pending or moine) else None,
     }
     if g.in_draft:
         d = dossier_valeurs([j.modele for j in s.joueurs] + [os.environ.get("CHAMP_MODELE")], RUNS)
@@ -316,7 +480,9 @@ def mise_en_place(req: Nouvelle) -> tuple[Game, dict]:
 @router.post("")
 def nouvelle(req: Nouvelle):
     g, mise = mise_en_place(req)
-    s = Session(g, req.joueurs, mise, req.mains_visibles)
+    if req.hybride:
+        mise = dict(mise, libelle="Plateau réel · " + mise["libelle"])
+    s = Session(g, req.joueurs, mise, req.mains_visibles, req.hybride)
     s.id = uuid.uuid4().hex[:10]
     SESSIONS[s.id] = s
     while len(SESSIONS) > 200:
@@ -336,14 +502,17 @@ def jouer(gid: str, req: Jouer, depuis: int = 0, version: int = -1):
         g = s.game
         if g.done:
             raise HTTPException(400, "La partie est terminée")
+        if s.hybride and s.requis():
+            raise HTTPException(400, "Saisissez d'abord la pioche de l'IA")
         if s.joueurs[g.to_move].type != "humain":
             raise HTTPException(400, "C'est au tour de l'IA")
-        legal = g.legal_actions()
+        legal = coups_libres(g, g.to_move) if s.hybride else g.legal_actions()
         if not 0 <= req.index < len(legal):
             raise HTTPException(400, "Coup inconnu (la position a changé ?)")
         a = legal[req.index]
-        s.film.ajouter(a)
-        s.actions.append(a)
+        if s.hybride:
+            a = concretiser(g.copy(), g.to_move, a)   # pièce fictive, choisie sans toucher la partie
+        s.jouer_etape(a)
         return etat(s, depuis, version)
 
 
@@ -353,10 +522,28 @@ def coup_ia(gid: str, depuis: int = 0, version: int = -1):
     s = session(gid)
     with s.lock:
         g = s.game
-        if not g.done and s.joueurs[g.to_move].type == "ia":
-            a = s.bots[g.to_move].choose(g)
-            s.film.ajouter(a)
-            s.actions.append(a)
+        if not g.done and s.joueurs[g.to_move].type == "ia" and not (s.hybride and s.requis()):
+            s.jouer_etape(s.bots[g.to_move].choose(g))
+        return etat(s, depuis, version)
+
+
+@router.post("/{gid}/tirage")
+def tirage(gid: str, req: Piocher, depuis: int = 0, version: int = -1):
+    """Hybride : pièce tirée du sac de l'IA sur la table (une par une, dans l'ordre)."""
+    s = session(gid)
+    if not s.hybride:
+        raise HTTPException(400, "Pioches saisies : partie hybride seulement")
+    with s.lock:
+        s.piocher(req.piece)
+        return etat(s, depuis, version)
+
+
+@router.post("/{gid}/tirage/annuler")
+def tirage_annuler(gid: str, depuis: int = 0, version: int = -1):
+    """Hybride : recommence la pioche en cours (le coup qui l'a déclenchée est conservé)."""
+    s = session(gid)
+    with s.lock:
+        s.recommencer_pioche()
         return etat(s, depuis, version)
 
 
@@ -374,11 +561,19 @@ def annuler(gid: str):
     """Annule le dernier coup humain (et les réponses de l'IA qui ont suivi)."""
     s = session(gid)
     with s.lock:
-        g = s.depart.copy()
+        if s.attente is not None:
+            att, s.attente = s.attente, None
+            if att["joueur"] != s.ia:           # coup du joueur plateau pas encore validé : abandonné
+                return etat(s)
+        if s.hybride and not s.actions and s.initial:
+            s.recommencer_pioche()               # première main de l'IA à saisir de nouveau
+            return etat(s)
+        g = s.depart()
         dernier = None
-        for k, a in enumerate(s.actions):
+        for k, (a, t) in enumerate(zip(s.actions, s.tirages)):
             if s.joueurs[g.to_move].type == "humain" and g.turn_start:
                 dernier = k
+            s._preparer(g, a, t)
             g.apply(a)
         if dernier is None:
             dernier = max(0, len(s.actions) - 1)
@@ -393,7 +588,7 @@ def reglages(gid: str, req: Reglages):
         if req.joueurs is not None:
             s.regler(req.joueurs)
             s.film.entetes = s._entetes()
-        if req.mains_visibles is not None:
+        if req.mains_visibles is not None and not s.hybride:
             s.mains_visibles = req.mains_visibles
         s.version += 1
         return etat(s)
@@ -406,9 +601,11 @@ def lire_position(gid: str, pos: int | None = None):
         g = s.jeu_a(len(s.actions) if pos is None else pos)
     masques = s.masques()
     if masques and not g.done:
-        # information cachée de l'IA : répartition tirée au hasard, compatible avec ce que sait l'humain
-        humain = next(i for i in range(2) if i not in masques)
-        return dict(position(g.determinize(humain)), hasard=True)
+        # information cachée : répartition tirée au hasard, compatible avec ce que sait l'autre joueur
+        voit = next(i for i in range(2) if i not in masques)
+        qui = "du joueur plateau" if s.hybride else "de l'IA"
+        return dict(position(g.determinize(voit)),
+                    hasard=f"Pièces cachées {qui} (main, sac, défausse cachée) réparties au hasard")
     return position(g)
 
 
@@ -417,6 +614,8 @@ def releve(gid: str):
     s = session(gid)
     if s.edite:
         raise HTTPException(400, "Partie issue de l'éditeur : pas de relevé rejouable depuis la mise en place")
+    if s.hybride:
+        raise HTTPException(400, "Partie hybride : les pioches saisies ne figurent pas dans un relevé")
     noms = [nom_joueur(j) for j in s.joueurs]
     return export_record(s.game, hidden=True, headers={"Blanc": noms[0], "Noir": noms[1]})
 
@@ -452,6 +651,9 @@ def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: st
                     score=0.0 if g.winner is None else (99.9 if g.winner == 0 else -99.9),
                     gain_or=0.5 if g.winner is None else float(g.winner == 0))
     if g.to_move in masques:
+        if s.hybride:
+            return dict(base, indisponible="Main du joueur plateau inconnue : l'analyse, vue par l'IA, "
+                                           "reprend à son tour.")
         return dict(base, indisponible="L'IA réfléchit : l'analyse reprend à votre tour "
                                        "(elle n'utilise que ce que vous savez).")
     observateur = g.to_move if masques else None

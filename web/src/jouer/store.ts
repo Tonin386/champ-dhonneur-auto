@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Decor, Image } from "../types";
-import type { Analyse, Conseil, EtatServeur, InfoIA, JoueurCfg, Legal, Mise, Position, Regles } from "./types";
+import type { Analyse, Conseil, EtatServeur, InfoIA, JoueurCfg, Legal, Mise, Position, Regles, Tirage } from "./types";
 
 export interface Config {
   joueurs: JoueurCfg[];
@@ -13,6 +13,8 @@ export interface Config {
   premier: number | null;
   graine: number | null;
   mains_visibles: boolean;
+  /** partie sur un vrai plateau : une IA, un joueur plateau (docs/HYBRIDE.md) */
+  hybride: boolean;
 }
 
 export const CONFIG_DEFAUT: Config = {
@@ -23,6 +25,7 @@ export const CONFIG_DEFAUT: Config = {
   premier: null,
   graine: null,
   mains_visibles: false,
+  hybride: false,
 };
 
 /** Configuration enregistrée (les anciennes clés, comme « unites », sont oubliées). */
@@ -59,6 +62,9 @@ interface EtatJeu {
   mise: Mise | null;
   mainsVisibles: boolean;
   masques: number[];
+  hybride: { ia: number; plateau: number } | null;
+  tirage: Tirage | null;
+  possibles: Record<string, number> | null;
 
   // affichage
   pos: number; // image affichée
@@ -90,6 +96,8 @@ interface EtatJeu {
   revenir(pos: number): Promise<void>;
   annuler(): Promise<void>;
   reglages(r: { joueurs?: JoueurCfg[]; mains_visibles?: boolean }): Promise<void>;
+  piocher(piece: string): Promise<void>;
+  recommencerPioche(): Promise<void>;
   aller(pos: number): void;
   pas(d: number): void;
   choisirPiece(c: string | null): void;
@@ -153,6 +161,8 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       joueurs: e.joueurs, trait: e.trait, humain: e.humain, ia: e.ia, legal: e.legal,
       attente: e.attente, pieceAttente: e.piece_attente, conseil: e.conseil ?? null, fini: e.fini, resultat: e.resultat,
       edite: e.edite, mise: e.mise, mainsVisibles: e.mains_visibles, masques: e.masques, analyses,
+      hybride: e.hybride ?? null, tirage: e.tirage ?? null, possibles: e.possibles ?? null,
+      ...(e.tirage && !s.tirage ? { onglet: "coups" as const } : {}),
       pos: auBout || nouvelle || s.pos >= images.length ? images.length - 1 : s.pos,
       piece: null, caseChoisie: null, survol: null, occupe: false,
     });
@@ -180,6 +190,9 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     mise: null,
     mainsVisibles: false,
     masques: [],
+    hybride: null,
+    tirage: null,
+    possibles: null,
     pos: 0,
     occupe: false,
     lecture: true,
@@ -208,8 +221,8 @@ export const useJeu = create<EtatJeu>()((set, get) => {
         set({ regles, infoIA });
         const c = get().config;
         // sans réseau disponible : partie entre humains
-        if (!infoIA.disponible && c.joueurs.some(j => j.type === "ia")) {
-          set({ config: { ...c, joueurs: c.joueurs.map(j => ({ ...j, type: "humain" as const })) } });
+        if (!infoIA.disponible && (c.hybride || c.joueurs.some(j => j.type === "ia"))) {
+          set({ config: { ...c, hybride: false, joueurs: c.joueurs.map(j => ({ ...j, type: "humain" as const })) } });
         }
         await get().nouvelle();
       } catch (e) {
@@ -291,6 +304,27 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       }
     },
 
+    piocher: async piece => {
+      const { id, occupe } = get();
+      if (!id || occupe) return;
+      set({ occupe: true });
+      try {
+        recevoir(await api<EtatServeur>(`/api/jeu/${id}/tirage?${q()}`, { piece }));
+      } catch (e) {
+        erreur(e);
+      }
+    },
+
+    recommencerPioche: async () => {
+      const { id } = get();
+      if (!id) return;
+      try {
+        recevoir(await api<EtatServeur>(`/api/jeu/${id}/tirage/annuler?${q()}`, {}));
+      } catch (e) {
+        erreur(e);
+      }
+    },
+
     aller: pos => {
       const n = get().images.length;
       set({ pos: Math.max(0, Math.min(pos, n - 1)), piece: null, caseChoisie: null, survol: null });
@@ -332,9 +366,9 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     ouvrirEditeur: async () => {
       const { id, pos } = get();
       try {
-        const p = id ? await api<Position & { hasard?: boolean }>(`/api/jeu/${id}/position?pos=${pos}`) : null;
+        const p = id ? await api<Position & { hasard?: string }>(`/api/jeu/${id}/position?pos=${pos}`) : null;
         set({ editeur: p, mode: "editeur", lecture: false });
-        if (p?.hasard) set({ info: "Pièces cachées de l'IA (main, sac, défausse cachée) réparties au hasard" });
+        if (p?.hasard) set({ info: p.hasard });
       } catch (e) {
         erreur(e);
       }

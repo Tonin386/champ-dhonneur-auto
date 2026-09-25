@@ -4,7 +4,7 @@ import type { Conseil } from "../jouer/types";
 import type { Decor, Image } from "../types";
 import { points } from "./Unites";
 
-function Piece({ c, equipe, petite, cachee }: { c?: string; equipe: number; petite?: boolean; cachee?: boolean }) {
+export function Piece({ c, equipe, petite, cachee }: { c?: string; equipe: number; petite?: boolean; cachee?: boolean }) {
   return (
     <span
       className={`piece e${equipe}${petite ? " petite" : ""}${cachee ? " cachee" : ""}`}

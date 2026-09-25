@@ -39,6 +39,23 @@ export interface EtatServeur {
   mise: Mise;
   mains_visibles: boolean;
   masques: number[];
+  /** partie hybride (plateau réel) : sièges de l'IA et du joueur plateau */
+  hybride: { ia: number; plateau: number } | null;
+  /** partie hybride : pioche de l'IA à saisir */
+  tirage: Tirage | null;
+  /** partie hybride : pièces que le joueur plateau pourrait jouer (nombre de chaque) */
+  possibles: Record<string, number> | null;
+}
+
+/** Pioche de l'IA à saisir, pièce par pièce (partie hybride) */
+export interface Tirage {
+  contexte: "initial" | "manche" | "moine";
+  sac: Record<string, number>; // pièces du sac de l'IA (après remise de la défausse)
+  melange: boolean; // sac vide : la défausse de l'IA y est remise d'abord
+  rang: number;
+  total: number;
+  choisies: string[];
+  coup: { n: string; d: string; j: number } | null; // coup qui déclenche la pioche
 }
 
 /** Mise en place de la partie (draft, libre ou position de l'éditeur) */

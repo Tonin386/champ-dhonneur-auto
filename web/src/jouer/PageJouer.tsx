@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Chronique } from "../components/Chronique";
-import { Joueur } from "../components/Joueur";
+import { Joueur, Piece } from "../components/Joueur";
 import { Plateau } from "../components/Plateau";
 import { EQUIPE, NOMS } from "../jeu";
 import { Analyse, BarreEval, CourbeEval, libelleScore } from "./Analyse";
@@ -10,6 +10,9 @@ import { useJeu } from "./store";
 import type { Legal } from "./types";
 
 const ATTAQUES = new Set(["attack"]);
+
+/** Nom d'une pièce ; « ? » : pièce jouée face cachée par le joueur plateau (partie hybride). */
+const nomPiece = (c: string) => (c === "?" ? "Pièce cachée" : NOMS[c]);
 
 /** Coups jouables affichés : filtrés par la pièce et la case choisies. */
 export function useCoups() {
@@ -98,8 +101,19 @@ function Statut() {
   const pos = useJeu(s => s.pos);
   const attente = useJeu(s => s.attente);
   const lecture = useJeu(s => s.lecture);
+  const tirage = useJeu(s => s.tirage);
+  const hybride = useJeu(s => s.hybride);
   const img = images[pos];
   if (!img) return <div className="phase"><span className="etiquette">Préparation…</span></div>;
+  if (tirage && pos === images.length - 1) {
+    const titre = { initial: "Première main de l'IA", manche: "Pioche de l'IA", moine: "Moine soldat de l'IA" }[tirage.contexte];
+    return (
+      <div className="phase statut humain">
+        <span className="etiquette">{titre}</span>
+        <span className="detail">pièce {tirage.rang} / {tirage.total} : saisissez la pièce tirée de son sac</span>
+      </div>
+    );
+  }
   const pause = !lecture && joueurs.every(j => j.type === "ia");
   const passe = pos < images.length - 1;
   const t = img.t;
@@ -115,7 +129,8 @@ function Statut() {
   } else {
     const qui = EQUIPE[trait];
     etiquette = humain
-      ? (joueurs.filter(j => j.type === "humain").length > 1 ? `${qui} : à vous de jouer` : "À vous de jouer")
+      ? (hybride ? "Joueur plateau : saisissez son coup"
+        : joueurs.filter(j => j.type === "humain").length > 1 ? `${qui} : à vous de jouer` : "À vous de jouer")
       : pause ? "En pause" : `${qui} réfléchit…`;
     detail = attente || `manche ${img.r} · ${qui} au trait`;
     cls = humain ? "humain" : "ia";
@@ -205,6 +220,24 @@ function EnTete() {
   );
 }
 
+/** Partie hybride : décisions de l'IA depuis la dernière saisie, à reproduire sur le plateau. */
+function useCoupsIA(): string[] {
+  const images = useJeu(s => s.images);
+  const hybride = useJeu(s => s.hybride);
+  const decor = useJeu(s => s.decor);
+  return useMemo(() => {
+    if (!hybride || !decor) return [];
+    const out: string[] = [];
+    for (let k = images.length - 1; k > 0; k--) {
+      const a = images[k].a;
+      // un coup suivi d'une pioche de l'IA a déjà été annoncé dans le panneau de pioche
+      if (!a || decor.equipes[a.j] !== decor.equipes[hybride.ia] || a.ti) break;
+      if (a.k !== "skip") out.unshift(a.d);
+    }
+    return out;
+  }, [images, hybride, decor]);
+}
+
 function SousPlateau() {
   const img = useJeu(s => s.images[s.pos]);
   const decor = useJeu(s => s.decor);
@@ -212,12 +245,23 @@ function SousPlateau() {
   const piece = useJeu(s => s.piece);
   const vivant = useJeu(s => s.pos === s.images.length - 1);
   const attente = useJeu(s => s.attente);
+  const tirage = useJeu(s => s.tirage);
+  const hybride = useJeu(s => s.hybride);
+  const coupsIA = useCoupsIA();
   if (!img || !decor) return <div className="sous-plateau" />;
   let texte;
-  if (vivant && humain && attente) texte = <span className="attente-decision">{attente}</span>;
+  if (vivant && tirage) {
+    texte = <span className="attente-decision">
+      {tirage.coup && tirage.coup.j === hybride?.ia ? `L'IA joue : ${tirage.coup.d}. ` : ""}
+      Piochez dans le sac de l'IA et saisissez les pièces à droite
+    </span>;
+  } else if (vivant && humain && hybride && coupsIA.length) {
+    texte = <span className="a-reproduire">À reproduire pour l'IA : <b>{coupsIA.join(" · ")}</b>, puis saisissez le coup du joueur plateau</span>;
+  } else if (vivant && humain && attente) texte = <span className="attente-decision">{attente}</span>;
   else if (vivant && humain) {
     texte = <span className="attente-decision">
-      {img.tir ? "Draft : choisissez une carte Unité dans votre colonne"
+      {img.tir ? (hybride ? "Draft : saisissez la carte choisie par le joueur plateau" : "Draft : choisissez une carte Unité dans votre colonne")
+        : hybride ? (piece ? `${nomPiece(piece)} : choisissez une case en surbrillance, ou un coup dans la liste` : "Choisissez à droite la pièce jouée sur la table, puis la case")
         : piece ? `${NOMS[piece]} : choisissez une case en surbrillance, ou un coup dans la liste` : "Choisissez une pièce de votre main, ou une unité sur le plateau"}
     </span>;
   } else if (img.a) texte = <span className="dernier">{EQUIPE[decor.equipes[img.a.j]]} : {img.a.d}</span>;
@@ -295,6 +339,7 @@ function Navigation() {
   const lecture = useJeu(s => s.lecture);
   const vitesse = useJeu(s => s.vitesse);
   const fini = useJeu(s => s.fini);
+  const hybride = useJeu(s => s.hybride);
   const s = useJeu.getState();
   if (!img) return null;
   const seule = joueurs.every(j => j.type === "ia");
@@ -332,7 +377,11 @@ function Navigation() {
         <button type="button" className="reprendre" onClick={() => s.revenir(pos)}
           title="Effacer la suite et reprendre la partie depuis la position affichée">Reprendre d'ici</button>
       ) : humains ? (
-        <button type="button" onClick={s.annuler} disabled={n === 0} title="Annuler votre dernier coup (et la réponse de l'IA)">Annuler mon coup</button>
+        hybride ? (
+          <button type="button" onClick={s.annuler} title="Annuler la dernière saisie : coup du joueur plateau (et réponse de l'IA), ou pioche en cours">Annuler la saisie</button>
+        ) : (
+          <button type="button" onClick={s.annuler} disabled={n === 0} title="Annuler votre dernier coup (et la réponse de l'IA)">Annuler mon coup</button>
+        )
       ) : null}
     </div>
   );
@@ -350,11 +399,12 @@ function Scene() {
   const conseil = useJeu(s => s.conseil);
   const mainsVisibles = useJeu(s => s.mainsVisibles);
   const fini = useJeu(s => s.fini);
+  const hybride = useJeu(s => s.hybride);
   if (!decor || !img) return <div className="scene"><div className="attente-partie">Préparation de la partie…</div></div>;
   const colonne = (j: number) => {
     const actif = vivant && humain && img.t === j && !attente;
     // un seul humain : la main de l'IA est cachée, sauf à la révéler (l'analyse devient omnisciente)
-    const mainIA = !fini && joueurs[j]?.type === "ia" && joueurs.filter(x => x.type === "humain").length === 1;
+    const mainIA = !fini && !hybride && joueurs[j]?.type === "ia" && joueurs.filter(x => x.type === "humain").length === 1;
     return (
       <div className="colonne-joueur">
         <Joueur decor={decor} image={img} joueur={j} nom="" role={joueurs[j]?.nom}
@@ -390,6 +440,75 @@ function Scene() {
 }
 
 // ------------------------------------------------------------------ colonne de droite
+/** Partie hybride : saisie, pièce par pièce, de la pioche de l'IA. */
+function PanneauPioche() {
+  const t = useJeu(s => s.tirage)!;
+  const hybride = useJeu(s => s.hybride)!;
+  const decor = useJeu(s => s.decor);
+  const occupe = useJeu(s => s.occupe);
+  const s = useJeu.getState();
+  const e = decor ? decor.equipes[hybride.ia] : hybride.ia;
+  const titre = { initial: "Première main de l'IA", manche: "Début de manche : pioche de l'IA", moine: "Moine soldat de l'IA : pioche d'une pièce" }[t.contexte];
+  return (
+    <div className="pioche-ia-p" aria-live="polite">
+      <h3>{titre}</h3>
+      {t.coup && (
+        <p className={`coup-declencheur${t.coup.j === hybride.ia ? " ia" : ""}`}>
+          {t.coup.j === hybride.ia ? <>L'IA joue <code>{t.coup.n}</code> {t.coup.d} : reproduisez-le sur le plateau.</>
+            : <>Coup saisi : <code>{t.coup.n}</code> {t.coup.d}</>}
+        </p>
+      )}
+      {t.melange && <p className="alerte-sac">Sac de l'IA vide : remettez sa défausse dans le sac et mélangez.</p>}
+      <p>Pièce <b>{t.rang}</b> sur {t.total} : cliquez la pièce tirée du sac de l'IA.</p>
+      <div className="sac-ia" role="group" aria-label="Pièces du sac de l'IA">
+        {Object.entries(t.sac).sort().map(([c, n]) => (
+          <button key={c} type="button" disabled={occupe} onClick={() => s.piocher(c)} title={`${NOMS[c]} : ${n} dans le sac`}>
+            <Piece c={c} equipe={e} />
+            <span className="nb">×{n}</span>
+            <span className="nom">{NOMS[c]}</span>
+          </button>
+        ))}
+      </div>
+      <div className="deja">
+        <span>Déjà saisies :</span>
+        {t.choisies.length ? t.choisies.map((c, k) => <Piece key={k} c={c} equipe={e} petite />) : <span className="vide">aucune</span>}
+        <button type="button" onClick={s.recommencerPioche} disabled={!t.choisies.length}>Recommencer la pioche</button>
+      </div>
+    </div>
+  );
+}
+
+/** Partie hybride : pièce jouée par le joueur plateau (parmi celles qu'il pourrait avoir). */
+function PiecesPossibles() {
+  const possibles = useJeu(s => s.possibles);
+  const piece = useJeu(s => s.piece);
+  const decor = useJeu(s => s.decor);
+  const hybride = useJeu(s => s.hybride);
+  const { tous } = useCoups();
+  if (!possibles || !hybride) return null;
+  const e = decor ? decor.equipes[hybride.plateau] : hybride.plateau;
+  const jouables = new Set(tous.map(l => l.coin));
+  const s = useJeu.getState();
+  const choix = Object.keys(possibles).filter(c => jouables.has(c)).sort();
+  return (
+    <div className="pieces-possibles" role="group" aria-label="Pièce jouée par le joueur plateau">
+      <span className="etiquette">Pièce jouée</span>
+      {choix.map(c => (
+        <button key={c} type="button" className={`bouton-piece${piece === c ? " choisie" : ""}`} aria-pressed={piece === c}
+          onClick={() => s.choisirPiece(c)} title={`${NOMS[c]} (face visible) : ${possibles[c]} peut-être en main`}>
+          <Piece c={c} equipe={e} />
+        </button>
+      ))}
+      {jouables.has("?") && (
+        <button type="button" className={`bouton-piece${piece === "?" ? " choisie" : ""}`} aria-pressed={piece === "?"}
+          onClick={() => s.choisirPiece("?")} title="Face cachée : passer, recruter, prendre l'Initiative (pièce non saisie)">
+          <Piece equipe={e} cachee />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ListeCoups() {
   const humain = useJeu(s => s.humain);
   const vivant = useJeu(s => s.pos === s.images.length - 1);
@@ -399,20 +518,26 @@ function ListeCoups() {
   const decor = useJeu(s => s.decor);
   const attente = useJeu(s => s.attente);
   const { tous, filtres } = useCoups();
+  const tirage = useJeu(s => s.tirage);
+  const hybride = useJeu(s => s.hybride);
   const s = useJeu.getState();
+  if (vivant && tirage) return <PanneauPioche />;
   if (!vivant) {
     return <p className="vide">Vous consultez l'historique. <button type="button" onClick={() => s.aller(s.images.length - 1)}>Revenir à la position actuelle</button></p>;
   }
   if (fini) return <p className="vide">Partie terminée. Lancez une nouvelle partie ou parcourez le déroulé (← →) avec l'analyse.</p>;
   if (!humain) return <p className="vide">L'IA réfléchit…</p>;
+  const invite = hybride ? "Saisissez le coup joué sur la table" : "";
   const nom = (i: number | null) => (i === null || !decor ? "" : decor.cases[i][0]);
   const liste = piece !== null || caseChoisie !== null ? filtres : tous;
   return (
     <>
+      {invite && <p className="invite-saisie">{invite}</p>}
+      <PiecesPossibles />
       <div className="filtre-coups">
         {attente ? <span>{attente}</span> : (
           <span>
-            {piece ? <>Pièce <b>{NOMS[piece]}</b></> : "Toutes les pièces"}
+            {piece ? <>Pièce <b>{nomPiece(piece)}</b></> : "Toutes les pièces"}
             {caseChoisie !== null && <> · case <b>{nom(caseChoisie)}</b></>}
             {" "}· {liste.length} coup{liste.length > 1 ? "s" : ""}
           </span>
@@ -438,13 +563,14 @@ function ListeCoups() {
 
 function PanneauCote() {
   const onglet = useJeu(s => s.onglet);
+  const hybride = useJeu(s => s.hybride);
   const n = useCoups().tous.length;
   const s = useJeu.getState();
   return (
     <aside className="cote">
       <div className="onglets" role="tablist">
         <button role="tab" aria-selected={onglet === "coups"} className={onglet === "coups" ? "on" : ""} onClick={() => s.set({ onglet: "coups" })}>
-          Vos coups <span className="n">{n || ""}</span>
+          {hybride ? "Saisie" : "Vos coups"} <span className="n">{n || ""}</span>
         </button>
         <button role="tab" aria-selected={onglet === "analyse"} className={onglet === "analyse" ? "on" : ""} onClick={() => s.set({ onglet: "analyse" })}>
           Analyse
