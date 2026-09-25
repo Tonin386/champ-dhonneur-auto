@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { EQUIPE, NOMS, geometrie, hexagone, imgPiece } from "../jeu";
+import { EQUIPE, NOMS, geometrie, geometrieRetournee, hexagone, imgPiece } from "../jeu";
 import type { Decor, Image, UniteImg } from "../types";
 
 interface Props {
@@ -21,6 +21,8 @@ interface Props {
   onCase?: (i: number, droit: boolean) => void;
   /** cases qui réagissent au clic (toutes si absent) */
   cliquables?: Set<number>;
+  /** plateau retourné : Argent en bas */
+  retourne?: boolean;
 }
 
 const ATTAQUES = new Set(["attack"]);
@@ -66,8 +68,8 @@ function Fleche({ G, de, a, cls, marqueur }: { G: ReturnType<typeof geometrie>; 
   return <line className={cls} x1={x1} y1={y1} x2={x1 + (x2 - x1) * k} y2={y1 + (y2 - y1) * k} markerEnd={marqueur} />;
 }
 
-export const Plateau = memo(function Plateau({ decor, image, precedente, duree = 400, mini, cle, cibles, choisie, survol, conseil, onCase, cliquables }: Props) {
-  const G = geometrie(decor);
+export const Plateau = memo(function Plateau({ decor, image, precedente, duree = 400, mini, cle, cibles, choisie, survol, conseil, onCase, cliquables, retourne }: Props) {
+  const G = retourne ? geometrieRetournee(decor) : geometrie(decor);
   const a = image.a;
   const cases = a?.c ?? [];
   const cible = cases.length ? cases[cases.length - 1] : null;

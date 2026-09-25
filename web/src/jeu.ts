@@ -35,6 +35,19 @@ export function geometrie(d: Decor): Geometrie {
   return g;
 }
 
+const CACHE_R = new WeakMap<Decor, Geometrie>();
+
+/** Plateau retourné (rotation d'un demi-tour) : Argent en bas, Or en haut ; textes et pièces restent
+ *  à l'endroit, seules les positions des cases changent. */
+export function geometrieRetournee(d: Decor): Geometrie {
+  const g0 = CACHE_R.get(d);
+  if (g0) return g0;
+  const G = geometrie(d);
+  const g = { ...G, centre: (i: number) => { const [x, y] = G.centre(i); return [G.W - x, G.H - y] as [number, number]; } };
+  CACHE_R.set(d, g);
+  return g;
+}
+
 export function hexagone(cx: number, cy: number, s: number): string {
   const p: string[] = [];
   for (let k = 0; k < 6; k++) {

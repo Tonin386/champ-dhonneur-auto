@@ -83,9 +83,11 @@ interface EtatJeu {
   masques: number[];
   hybride: { ia: number; plateau: number } | null;
   tirage: Tirage | null;
+  apercu: Image | null;
   possibles: Record<string, number> | null;
 
   // affichage
+  retourne: boolean; // plateau retourné : Argent en bas
   pos: number; // image affichée
   occupe: boolean; // requête de jeu en cours
   lecture: boolean; // IA contre IA : lecture automatique
@@ -139,6 +141,7 @@ interface EtatJeu {
   setEditeur(p: Position | null): void;
   setErreur(e: string | null): void;
   setPilotage(p: Pilotage): void;
+  basculerRetourne(): void;
   chargerParties(): Promise<void>;
   ouvrirPartie(id: string): Promise<boolean>;
   supprimerPartie(id: string): Promise<void>;
@@ -172,7 +175,7 @@ function ecrire(cle: string, v: unknown) {
 }
 
 const prefs = lire("champ.jouer", {
-  analyse: false, simulations: 400, fleche: true, vitesse: 700, pilotage: "auto" as Pilotage,
+  analyse: false, simulations: 400, fleche: true, vitesse: 700, pilotage: "auto" as Pilotage, retourne: false,
 });
 
 /** Partie affichée : reprise au rechargement de la page. */
@@ -211,7 +214,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       joueurs: e.joueurs, trait: e.trait, humain: e.humain, ia: e.ia, legal: e.legal,
       attente: e.attente, pieceAttente: e.piece_attente, conseil: e.conseil ?? null, fini: e.fini, resultat: e.resultat,
       edite: e.edite, mise: e.mise, mainsVisibles: e.mains_visibles, masques: e.masques, analyses,
-      hybride: e.hybride ?? null, tirage: e.tirage ?? null, possibles: e.possibles ?? null,
+      hybride: e.hybride ?? null, tirage: e.tirage ?? null, apercu: e.apercu ?? null, possibles: e.possibles ?? null,
       ...(e.tirage && !s.tirage ? { onglet: "coups" as const } : {}),
       // nouvelle partie : aides à la décision masquées, IA de nouveau pilotée
       ...(nouvelle ? { aides: false, panne: false, onglet: "coups" as const } : {}),
@@ -245,7 +248,9 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     masques: [],
     hybride: null,
     tirage: null,
+    apercu: null,
     possibles: null,
+    retourne: prefs.retourne,
     pos: 0,
     occupe: false,
     lecture: true,
@@ -437,6 +442,10 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       }
     },
     setEditeur: editeur => set({ editeur }),
+    basculerRetourne: () => {
+      set({ retourne: !get().retourne });
+      sauverPrefs();
+    },
     setPilotage: pilotage => {
       set({ pilotage, panne: false });
       sauverPrefs();
@@ -474,8 +483,12 @@ export const useJeu = create<EtatJeu>()((set, get) => {
 
 export const sauverPrefs = () => {
   const s = useJeu.getState();
-  ecrire("champ.jouer", { analyse: s.analyse, simulations: s.simulations, fleche: s.fleche, vitesse: s.vitesse, pilotage: s.pilotage });
+  ecrire("champ.jouer", { analyse: s.analyse, simulations: s.simulations, fleche: s.fleche, vitesse: s.vitesse, pilotage: s.pilotage, retourne: s.retourne });
 };
+
+/** Image affichée ; en hybride, pendant la pioche de l'IA : la position après son coup (aperçu). */
+export const useImageAffichee = () =>
+  useJeu(s => (s.apercu && s.tirage && s.pos === s.images.length - 1 ? s.apercu : s.images[s.pos]));
 
 /** Aides à la décision visibles : toujours sans joueur humain, sinon sur demande. */
 export const useAides = () => useJeu(s => s.aides || !s.joueurs.some(j => j.type === "humain"));
@@ -484,5 +497,6 @@ export const useAides = () => useJeu(s => s.aides || !s.joueurs.some(j => j.type
 export const useAnalyseActive = () => {
   const aides = useAides();
   const analyse = useJeu(s => s.analyse);
-  return aides && analyse;
+  const hybride = useJeu(s => s.hybride !== null);
+  return hybride || (aides && analyse);   // hybride : l'analyse vue par l'IA est toujours affichée
 };

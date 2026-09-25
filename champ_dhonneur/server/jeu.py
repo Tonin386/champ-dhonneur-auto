@@ -341,6 +341,25 @@ class Session:
                 "melange": r.melange, "rang": r.rang, "total": r.total,
                 "choisies": list(self.attente["tirages"]), "coup": self.attente["coup"]}
 
+    def apercu(self) -> dict | None:
+        """Hybride : position juste après le coup en attente des pioches de l'IA (sans ces pioches),
+        pour reproduire ce coup sur le plateau avant de piocher."""
+        if self.attente is None:
+            return None
+        f = Film.__new__(Film)
+        f.game, f.entetes, f.images = self.game.copy(), {}, []
+        f._ids, f._cle, f._suivant = dict(self.film._ids), dict(self.film._cle), self.film._suivant
+        g, ia = f.game, self.ia
+        a = self.attente["action"]
+        if g.to_move == self.plateau:
+            concretiser(g, self.plateau, a)
+        g._draw = lambda p: None if p == ia else Game._draw(g, p)   # pioches de l'IA pas encore saisies
+        try:
+            f.ajouter(a)
+        except Exception:  # noqa: BLE001 — l'aperçu est facultatif
+            return None
+        return f.images[-1]
+
     def revenir(self, n: int) -> None:
         """Garde les n premières décisions."""
         n = max(0, min(n, len(self.actions)))
@@ -524,6 +543,7 @@ def etat(s: Session, depuis: int = 0, version: int = -1) -> dict:
         "mains_visibles": s.mains_visibles, "masques": sorted(masques),
         "hybride": {"ia": s.ia, "plateau": s.plateau} if s.hybride else None,
         "tirage": requis,
+        "apercu": _masquer(ap, masques) if requis and (ap := s.apercu()) is not None else None,
         # hybride : pièces que le joueur plateau pourrait jouer (information publique)
         "possibles": dict(pieces_possibles(g, tm)) if humain and s.hybride and not g.in_draft
         and (not g.pending or moine) else None,
@@ -814,14 +834,14 @@ def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: st
         return dict(base, fini=g.result_label(), texte=g.result_label().replace("1/2-1/2", "½-½"), coups=[],
                     score=0.0 if g.winner is None else (99.9 if g.winner == 0 else -99.9),
                     gain_or=0.5 if g.winner is None else float(g.winner == 0))
-    if g.to_move in masques:
+    vue_ia = s.hybride and g.to_move in masques
+    if g.to_move in masques and not vue_ia:
         base["coups"] = []
-        if s.hybride:
-            return dict(base, indisponible="Main du joueur plateau inconnue : l'analyse, vue par l'IA, "
-                                           "reprend à son tour.")
         return dict(base, indisponible="L'IA réfléchit : l'analyse reprend à votre tour "
                                        "(elle n'utilise que ce que vous savez).")
-    observateur = g.to_move if masques else None
+    observateur = s.ia if vue_ia else (g.to_move if masques else None)
+    if observateur is not None:
+        base["observateur"] = observateur
     modele = _modele_valide(modele)
     ia_ok = torch_present() and (modele or modeles())
     if not ia_ok:
@@ -838,6 +858,8 @@ def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: st
         return _gain(out)
     from ..ia.analyse import analyser
     simulations = max(32, min(3200, simulations))
+    if vue_ia:
+        return _gain(_analyse_vue_ia(g, s.ia, n, simulations, modele, base))
     with _ANALYSTE_VERROU:
         try:
             bot = _analyste(simulations, modele)
@@ -850,6 +872,43 @@ def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: st
         c["cases"] = list(action.cells)
         c["i"] = legal.index(action)            # index du coup pour le jouer depuis l'analyse
     return _gain(dict(base, source="reseau", **{k: v for k, v in r.items() if k != "bastions"}))
+
+
+MAINS_ANALYSE = 4    # hybride : mains possibles du joueur plateau moyennées par l'analyse
+
+
+def _analyse_vue_ia(g: Game, ia: int, pos: int, simulations: int, modele: str | None, base: dict) -> dict:
+    """Hybride, joueur plateau au trait : sa main est inconnue. Évaluation vue par l'IA, moyenne sur
+    quelques mains compatibles avec ce qu'elle sait (déterminisations) ; pas de meilleurs coups,
+    qui seraient ceux d'une main supposée. Victoire forcée : celle de l'IA, quelle que soit la main."""
+    import random
+
+    from ..ia.analyse import analyser
+    from ..score import Solveur, appreciation, depuis_valeur, texte_mat, texte_score
+    par_main = max(32, simulations // MAINS_ANALYSE)
+    vs, k = [], None
+    with _ANALYSTE_VERROU:
+        try:
+            bot = _analyste(par_main, modele)
+        except (FileNotFoundError, ImportError) as e:
+            raise HTTPException(400, f"IA indisponible : {e}")
+        for m in range(MAINS_ANALYSE):
+            d = g.determinize(ia, random.Random(7919 * pos + m))
+            r = analyser(d, bot, top=1, solveur=False)
+            vs.append(r["v_or"])
+            k = r.get("k")
+    v_or = sum(vs) / len(vs)
+    score = depuis_valeur(v_or, k)
+    out = dict(base, source="reseau", coups=[], v_or=round(v_or, 3), score=round(score, 1), k=k,
+               texte=texte_score(score), appreciation=appreciation(score), mat=None,
+               simulations=par_main * MAINS_ANALYSE, mains=MAINS_ANALYSE)
+    mat = Solveur(ia).chercher(g)
+    if mat:
+        out.update(texte=texte_mat(mat["equipe"], mat["coups"]), score=99.9 if mat["equipe"] == 0 else -99.9,
+                   mat={"equipe": mat["equipe"], "coups": mat["coups"], "coup": None},
+                   appreciation=("+−" if mat["equipe"] == 0 else "−+",
+                                 f"Victoire forcée {('Or', 'Argent')[mat['equipe']]} en {mat['coups']}"))
+    return out
 
 
 def _gain(out: dict) -> dict:

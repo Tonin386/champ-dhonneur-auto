@@ -7,7 +7,7 @@ import { Analyse, BarreEval, CourbeEval, libelleScore } from "./Analyse";
 import { Editeur, PanneauPosition } from "./Editeur";
 import { DialogueNouvelle } from "./Nouvelle";
 import { DialogueParties } from "./Parties";
-import { sauverPrefs, useAides, useAnalyseActive, useJeu, type Pilotage } from "./store";
+import { sauverPrefs, useAides, useAnalyseActive, useImageAffichee, useJeu, type Pilotage } from "./store";
 import type { Legal } from "./types";
 
 const ATTAQUES = new Set(["attack"]);
@@ -88,9 +88,10 @@ function useClavier() {
         Home: () => s.aller(0),
         End: () => s.aller(s.images.length - 1),
         Escape: () => s.set({ piece: null, caseChoisie: null }),
-        a: () => { if (aidesVisibles()) s.basculerAnalyse(); },
+        a: () => { if (aidesVisibles() && !s.hybride) s.basculerAnalyse(); },
         " ": () => { if (s.ia && !s.occupe) void s.coupIA(); },
         n: () => s.set({ dialogue: true }),
+        t: s.basculerRetourne,
         e: () => void s.ouvrirEditeur(),
         f: () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()),
       };
@@ -171,7 +172,7 @@ function KpiEval() {
 }
 
 function KpiBastions() {
-  const img = useJeu(s => s.images[s.pos]);
+  const img = useImageAffichee();
   if (!img) return null;
   const b = [0, 1].map(e => img.c.filter(([, t]) => t === e).length);
   return (
@@ -203,6 +204,7 @@ function BarreJeu() {
   const analyse = useJeu(s => s.analyse);
   const aides = useAides();
   const mode = useJeu(s => s.mode);
+  const hybride = useJeu(s => s.hybride !== null);
   const s = useJeu.getState();
   return (
     <header className="barre">
@@ -228,7 +230,7 @@ function BarreJeu() {
         <button type="button" onClick={() => { s.set({ historique: true }); void s.chargerParties(); }}
           title="Parties jouées et en cours : reprendre ou revoir">Parties</button>
         {mode === "jeu" && <BasculeAides />}
-        {mode === "jeu" ? (aides && (
+        {mode === "jeu" ? (aides && !hybride && (
           <button type="button" className={analyse ? "on" : ""} onClick={s.basculerAnalyse} aria-pressed={analyse}
             title="Analyse de la position affichée par le réseau entraîné (A)">Analyse</button>
         )) : (
@@ -243,11 +245,16 @@ function BarreJeu() {
 function EnTete() {
   const mise = useJeu(s => s.mise);
   const vivant = useJeu(s => s.pos === s.images.length - 1);
+  const retourne = useJeu(s => s.retourne);
   if (!mise) return null;
   return (
     <div className="entete-partie">
       <span className={`badge${vivant ? " vivant" : ""}`}>{vivant ? "Partie" : "Historique"}</span>
       <span className="qui">{mise.libelle}</span>
+      <button type="button" className={`retourner${retourne ? " on" : ""}`} aria-pressed={retourne}
+        onClick={useJeu.getState().basculerRetourne} title="Retourner le plateau : Or ou Argent en bas (T)">
+        ⇅ {retourne ? "Argent en bas" : "Or en bas"}
+      </button>
     </div>
   );
 }
@@ -271,7 +278,7 @@ function useCoupsIA(): string[] {
 }
 
 function SousPlateau() {
-  const img = useJeu(s => s.images[s.pos]);
+  const img = useImageAffichee();
   const decor = useJeu(s => s.decor);
   const humain = useJeu(s => s.humain);
   const piece = useJeu(s => s.piece);
@@ -283,10 +290,9 @@ function SousPlateau() {
   if (!img || !decor) return <div className="sous-plateau" />;
   let texte;
   if (vivant && tirage) {
-    texte = <span className="attente-decision">
-      {tirage.coup && tirage.coup.j === hybride?.ia ? `L'IA joue : ${tirage.coup.d}. ` : ""}
-      Piochez dans le sac de l'IA et saisissez les pièces à droite
-    </span>;
+    texte = tirage.coup && tirage.coup.j === hybride?.ia
+      ? <span className="a-reproduire">À reproduire pour l'IA : <b>{tirage.coup.d}</b>, puis piochez dans son sac (à droite)</span>
+      : <span className="attente-decision">Piochez dans le sac de l'IA et saisissez les pièces à droite</span>;
   } else if (vivant && humain && hybride && coupsIA.length) {
     texte = <span className="a-reproduire">À reproduire pour l'IA : <b>{coupsIA.join(" · ")}</b>, puis saisissez le coup du joueur plateau</span>;
   } else if (vivant && humain && attente) texte = <span className="attente-decision">{attente}</span>;
@@ -302,7 +308,7 @@ function SousPlateau() {
 }
 
 function Resultat() {
-  const img = useJeu(s => s.images[s.pos]);
+  const img = useImageAffichee();
   if (!img?.f) return null;
   return (
     <div className={`resultat e${img.f.g ?? "n"}`} role="status">
@@ -325,7 +331,9 @@ function PlateauJeu() {
   const fleche = useJeu(s => s.fleche);
   const a = useJeu(s => s.analyses[s.pos]);
   const { tous, filtres } = useCoups();
-  const img = images[pos];
+  const retourne = useJeu(s => s.retourne);
+  const img = useImageAffichee();
+  const apercu = img !== images[pos];   // hybride : coup de l'IA joué, pioche en attente
 
   const { cibles, cliquables } = useMemo(() => {
     const cibles = new Map<number, "attaque" | "jouable">();
@@ -356,9 +364,10 @@ function PlateauJeu() {
   const conseil = analyse && fleche && !survol && a?.coups?.[0]?.cases?.length ? a.coups[0].cases : null;
   return (
     <Plateau
-      key={decor.graine + ":" + decor.unites.join()} decor={decor} image={img} precedente={pos > 0 ? images[pos - 1] : null}
-      duree={380} cle={pos} cibles={cibles} choisie={caseChoisie} survol={survol} conseil={conseil}
-      onCase={tous.length ? onCase : undefined} cliquables={cliquables}
+      key={decor.graine + ":" + decor.unites.join()} decor={decor} image={img}
+      precedente={apercu ? images[pos] : pos > 0 ? images[pos - 1] : null}
+      duree={380} cle={apercu ? pos + 1 : pos} cibles={cibles} choisie={caseChoisie} survol={survol} conseil={conseil}
+      onCase={tous.length ? onCase : undefined} cliquables={cliquables} retourne={retourne}
     />
   );
 }
@@ -448,7 +457,8 @@ function Navigation() {
 
 function Scene() {
   const decor = useJeu(s => s.decor);
-  const img = useJeu(s => s.images[s.pos]);
+  const img = useImageAffichee();
+  const retourne = useJeu(s => s.retourne);
   const joueurs = useJeu(s => s.joueurs);
   const piece = useJeu(s => s.piece);
   const vivant = useJeu(s => s.pos === s.images.length - 1);
@@ -483,7 +493,7 @@ function Scene() {
   };
   return (
     <div className="scene">
-      {colonne(0)}
+      {colonne(retourne ? 1 : 0)}
       <div className="centre">
         <EnTete />
         <div className="table-bois avec-barre">
@@ -494,7 +504,7 @@ function Scene() {
         <SousPlateau />
         <Navigation />
       </div>
-      {colonne(1)}
+      {colonne(retourne ? 0 : 1)}
     </div>
   );
 }
@@ -624,7 +634,7 @@ function ListeCoups() {
 function PanneauCote() {
   const onglet0 = useJeu(s => s.onglet);
   const hybride = useJeu(s => s.hybride);
-  const aides = useAides();
+  const aides = useAides() || hybride !== null;   // hybride : l'analyse vue par l'IA reste visible
   const onglet = aides ? onglet0 : "coups";
   const n = useCoups().tous.length;
   const s = useJeu.getState();

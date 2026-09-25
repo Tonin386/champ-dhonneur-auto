@@ -31,16 +31,20 @@ function useEvalAffichee(): TAnalyse | null {
 /** Barre verticale à gauche du plateau : Argent en haut, Or en bas (comme sur le plateau). */
 export function BarreEval() {
   const analyse = useAnalyseActive();
+  const retourne = useJeu(s => s.retourne);
   const a = useEvalAffichee();
   if (!analyse) return null;
   const or = a?.gain_or ?? 0.5;
   const txt = a ? libelleScore(a).texte : "";
+  // texte du côté du camp qui mène ; plateau retourné : Or en haut
+  const coteOr = retourne ? "haut" : "bas";
+  const cote = or >= 0.5 ? coteOr : coteOr === "bas" ? "haut" : "bas";
   return (
-    <div className="barre-eval" role="meter" aria-label="Évaluation" aria-valuemin={0} aria-valuemax={100}
+    <div className={`barre-eval${retourne ? " retournee" : ""}`} role="meter" aria-label="Évaluation" aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={Math.round(100 * or)} aria-valuetext={txt}
-      title="Part d'Or (en bas) et d'Argent (en haut) : chances de gain estimées">
+      title={`Part d'Or (${retourne ? "en haut" : "en bas"}) et d'Argent : chances de gain estimées`}>
       <div className="part-or" style={{ height: `${100 * or}%` }} />
-      <span className={`texte-barre ${or >= 0.5 ? "bas" : "haut"}`}>{txt}</span>
+      <span className={`texte-barre ${cote} ${or >= 0.5 ? "sur-or" : "sur-argent"}`}>{txt}</span>
     </div>
   );
 }
@@ -48,7 +52,7 @@ export function BarreEval() {
 const SIMULATIONS = [100, 200, 400, 800, 1600];
 
 export function Analyse() {
-  const analyse = useJeu(s => s.analyse);
+  const analyse = useAnalyseActive();
   const a = useJeu(s => s.analyses[s.pos]);
   const enAnalyse = useJeu(s => s.enAnalyse);
   const simulations = useJeu(s => s.simulations);
@@ -80,7 +84,8 @@ export function Analyse() {
           {a && !a.fini && (
             <span>
               Bastions Or {a.bastions[0]} · Argent {a.bastions[1]}
-              {a.source === "reseau" ? ` · ${a.simulations ?? 0} simulations, vu par ${EQUIPE[a.trait]}` : ""}
+              {a.source === "reseau" ? ` · ${a.simulations ?? 0} simulations, vu par ${EQUIPE[a.observateur ?? a.trait]}` : ""}
+              {a.mains ? ` · main du joueur plateau inconnue : moyenne sur ${a.mains} mains possibles` : ""}
             </span>
           )}
           {a?.indisponible && <span className="indispo">{a.indisponible}</span>}

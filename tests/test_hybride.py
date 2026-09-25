@@ -299,3 +299,45 @@ def test_coup_cache_du_joueur_plateau_jamais_devoile(client):
         a = img["a"]
         if a and a["j"] == 0:
             assert a["pc"] is None and "pièce" not in a["d"], a
+
+
+def test_apercu_du_coup_de_l_ia_avant_sa_pioche(client):
+    """Le coup de l'IA qui déclenche sa pioche est montré (aperçu) avant la saisie des pièces."""
+    armees = [list("SPXH"), list("ACLE")]
+    e = client.post("/api/jeu", json={"mode": "libre", "armees": armees, "premier": 0, "hybride": True,
+                                      "joueurs": [{"type": "humain"}, {"type": "ia"}]}).json()
+    gid = e["id"]
+    for piece in ("A", "C", "E"):
+        e = client.post(f"/api/jeu/{gid}/tirage", json={"piece": piece}).json()
+    assert e["apercu"] is None
+    # Or ouvre et passe : l'IA (Argent) joue la dernière pièce de la manche, puis doit piocher
+    while not e["tirage"]:
+        if e["ia"]:
+            e = client.post(f"/api/jeu/{gid}/ia").json()
+        else:
+            i = next(l["i"] for l in e["legal"] if l["kind"] == "pass")
+            e = client.post(f"/api/jeu/{gid}/jouer", json={"index": i}).json()
+    t, ap = e["tirage"], e["apercu"]
+    assert t["coup"]["j"] == 1 and ap is not None
+    assert ap["a"]["j"] == 1 and ap["a"]["n"] == t["coup"]["n"]     # le coup de l'IA est joué dans l'aperçu
+    assert len(ap["j"][1]["h"]) == 0                                # sa nouvelle main n'est pas encore piochée
+    assert all(x == "?" for x in ap["j"][0]["h"])                  # main du joueur plateau masquée
+    n = e["n"]
+    for _ in range(3):
+        if not e["tirage"]:
+            break
+        e = client.post(f"/api/jeu/{gid}/tirage", json={"piece": sorted(e["tirage"]["sac"])[0]}).json()
+    assert e["apercu"] is None and e["n"] == n + 1
+
+
+def test_analyse_au_trait_du_joueur_plateau(client):
+    """Hybride : l'évaluation reste disponible au tour du joueur plateau, vue par l'IA."""
+    e = client.post("/api/jeu", json={"mode": "libre", "premier": 0, "hybride": True,
+                                      "joueurs": [{"type": "humain"}, {"type": "ia"}]}).json()
+    gid = e["id"]
+    while e["tirage"]:
+        e = client.post(f"/api/jeu/{gid}/tirage", json={"piece": sorted(e["tirage"]["sac"])[0]}).json()
+    assert e["humain"]
+    a = client.post(f"/api/jeu/{gid}/analyse").json()
+    assert "indisponible" not in a or "Réseau" in a["indisponible"]
+    assert a["observateur"] == 1 and "score" in a and a["coups"] == []

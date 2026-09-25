@@ -43,6 +43,8 @@ export interface EtatServeur {
   hybride: { ia: number; plateau: number } | null;
   /** partie hybride : pioche de l'IA à saisir */
   tirage: Tirage | null;
+  /** partie hybride : position après le coup en attente des pioches de l'IA */
+  apercu?: Image | null;
   /** partie hybride : pièces que le joueur plateau pourrait jouer (nombre de chaque) */
   possibles: Record<string, number> | null;
 }
@@ -92,6 +94,8 @@ export interface Analyse {
   simulations?: number;
   v_or?: number;
   gain_or?: number; // part de la barre d'évaluation revenant à Or, dans [0, 1]
+  observateur?: number; // joueur dont l'information est utilisée (hybride : l'IA)
+  mains?: number; // hybride, joueur plateau au trait : mains possibles moyennées
 }
 
 export interface UniteRegle {

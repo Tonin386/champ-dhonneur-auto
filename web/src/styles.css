@@ -344,8 +344,13 @@ button.pause-demandee { border-color: var(--or); color: var(--or); }
   position: absolute; left: 0; right: 0; text-align: center; font: 700 0.62rem/1 var(--texte-f); letter-spacing: -0.02em;
   writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; padding: 0.4rem 0;
 }
-.texte-barre.bas { bottom: 0; color: #3b2a0a; }
-.texte-barre.haut { top: 0; color: #eef3f5; }
+.texte-barre.bas { bottom: 0; }
+.texte-barre.haut { top: 0; }
+.texte-barre.sur-or { color: #3b2a0a; }
+.texte-barre.sur-argent { color: #eef3f5; }
+.barre-eval.retournee .part-or { top: 0; bottom: auto; }
+.barre-eval.retournee .part-or::before { top: auto; bottom: -1px; }
+.entete-partie .retourner { margin-left: auto; font-size: 0.85rem; padding: 0.2rem 0.6rem; }
 
 /* plateau interactif */
 .case.choisie { stroke: var(--or); stroke-width: 3.4; }
