@@ -36,8 +36,15 @@ export interface EtatServeur {
   fini: boolean;
   resultat: string;
   edite: boolean;
+  mise: Mise;
   mains_visibles: boolean;
   masques: number[];
+}
+
+/** Mise en place de la partie (draft, libre ou position de l'éditeur) */
+export interface Mise {
+  mode: "draft" | "libre" | "position";
+  libelle: string;
 }
 
 export interface CoupAnalyse {
@@ -85,7 +92,8 @@ export interface Regles {
   departs: string[][];
   unites: Record<string, UniteRegle>;
   premiere: string[][];
-  scenarios: Record<string, string>;
+  armees: Record<string, string[][]>; // armées toutes faites du mode libre
+  draft: number; // nombre de cartes du draft
   niveaux: Record<string, string>;
 }
 

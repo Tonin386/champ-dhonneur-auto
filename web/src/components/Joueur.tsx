@@ -30,6 +30,8 @@ interface Props {
   attente?: string | null;
   /** draft : valeur de chaque carte (conseil au joueur humain), masquable */
   conseil?: Conseil | null;
+  /** page Jouer : révéler ou cacher la main de l'IA */
+  mains?: { visibles: boolean; basculer: () => void };
 }
 
 const lireMasque = () => {
@@ -40,7 +42,7 @@ const lireMasque = () => {
   }
 };
 
-export function Joueur({ decor, image, joueur, nom, role, onPiece, choisie, attente, conseil }: Props) {
+export function Joueur({ decor, image, joueur, nom, role, onPiece, choisie, attente, conseil, mains }: Props) {
   const [masque, setMasque] = useState(lireMasque);
   const basculer = () => {
     setMasque(!masque);
@@ -64,7 +66,15 @@ export function Joueur({ decor, image, joueur, nom, role, onPiece, choisie, atte
         </div>
       </div>
       <div className="bloc main-j">
-        <div className="etiquette">Main</div>
+        <div className="etiquette">
+          Main
+          {mains && (
+            <button type="button" className="lien" onClick={mains.basculer} aria-pressed={mains.visibles}
+              title={mains.visibles ? "Cacher de nouveau la main de l'IA" : "Montrer la main de l'IA (l'analyse devient omnisciente)"}>
+              {mains.visibles ? "cacher" : "révéler"}
+            </button>
+          )}
+        </div>
         <div className="pieces">
           {attente && (
             <span className="piochee" title="Pièce piochée par le Moine soldat, à jouer aussitôt">

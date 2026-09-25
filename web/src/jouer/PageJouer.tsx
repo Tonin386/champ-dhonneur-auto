@@ -66,7 +66,8 @@ function useClavier() {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (["INPUT", "SELECT", "TEXTAREA"].includes((document.activeElement as HTMLElement)?.tagName)) return;
       const s = useJeu.getState();
-      if (s.mode !== "jeu" || s.dialogue) return;
+      if (s.dialogue) return;
+      if (s.mode !== "jeu") { if (e.key.toLowerCase() === "e") s.set({ mode: "jeu" }); return; }
       const actions: Record<string, () => void> = {
         ArrowLeft: () => s.pas(-1),
         ArrowRight: () => s.pas(1),
@@ -155,28 +156,10 @@ function KpiBastions() {
   );
 }
 
-function KpiJoueurs() {
-  const joueurs = useJeu(s => s.joueurs);
-  const edite = useJeu(s => s.edite);
-  if (!joueurs.length) return null;
-  return (
-    <div className="kpi">
-      <div className="label">{edite ? "Position de l'éditeur" : "Partie"}</div>
-      <div className="val petite">{joueurs[0].type === "ia" ? "IA" : "Humain"} <span className="contre">contre</span> {joueurs[1].type === "ia" ? "IA" : "Humain"}</div>
-      <div className="det">Or : {joueurs[0].nom} · Argent : {joueurs[1].nom}</div>
-    </div>
-  );
-}
-
 function BarreJeu() {
   const analyse = useJeu(s => s.analyse);
   const mode = useJeu(s => s.mode);
-  const masques = useJeu(s => s.masques);
-  const mainsVisibles = useJeu(s => s.mainsVisibles);
-  const joueurs = useJeu(s => s.joueurs);
-  const fini = useJeu(s => s.fini);
   const s = useJeu.getState();
-  const unHumain = joueurs.filter(j => j.type === "humain").length === 1;
   return (
     <header className="barre">
       <div className="marque">
@@ -194,22 +177,15 @@ function BarreJeu() {
           <span className="detail">clic : poser · clic droit : retirer une pièce</span></div>
       )}
       <div className="kpis">
-        {mode === "jeu" && <><KpiJoueurs /><KpiBastions /><KpiEval /></>}
+        {mode === "jeu" && <><KpiBastions /><KpiEval /></>}
       </div>
       <div className="commandes">
-        <button type="button" onClick={() => s.set({ dialogue: true })} title="Nouvelle partie (N)">Nouvelle partie</button>
-        <button type="button" className={mode === "editeur" ? "on" : ""} onClick={() => (mode === "editeur" ? s.set({ mode: "jeu" }) : s.ouvrirEditeur())}
-          title="Éditeur de position (E)">Éditeur</button>
-        {mode === "jeu" && (
+        <button type="button" className="on" onClick={() => s.set({ dialogue: true })} title="Nouvelle partie : draft, libre ou position (N)">Nouvelle partie</button>
+        {mode === "jeu" ? (
           <button type="button" className={analyse ? "on" : ""} onClick={s.basculerAnalyse} aria-pressed={analyse}
             title="Analyse de la position affichée par le réseau entraîné (A)">Analyse</button>
-        )}
-        {mode === "jeu" && unHumain && !fini && (
-          <button type="button" className={mainsVisibles ? "on" : ""} aria-pressed={mainsVisibles}
-            onClick={() => s.reglages({ mains_visibles: !mainsVisibles })}
-            title={masques.length ? "Montrer la main de l'IA (triche : l'analyse devient omnisciente)" : "Cacher de nouveau la main de l'IA"}>
-            Mains visibles
-          </button>
+        ) : (
+          <button type="button" onClick={() => s.set({ mode: "jeu" })} title="Quitter l'éditeur (E)">Retour à la partie</button>
         )}
       </div>
     </header>
@@ -218,15 +194,13 @@ function BarreJeu() {
 
 // ------------------------------------------------------------------ scène
 function EnTete() {
-  const joueurs = useJeu(s => s.joueurs);
-  const edite = useJeu(s => s.edite);
-  const pos = useJeu(s => s.pos);
-  const n = useJeu(s => s.images.length);
-  if (!joueurs.length) return null;
+  const mise = useJeu(s => s.mise);
+  const vivant = useJeu(s => s.pos === s.images.length - 1);
+  if (!mise) return null;
   return (
     <div className="entete-partie">
-      <span className={`badge${pos === n - 1 ? " vivant" : ""}`}>{pos === n - 1 ? (edite ? "Position éditée" : "Partie") : "Historique"}</span>
-      <span className="qui">{joueurs[0].nom} (Or) contre {joueurs[1].nom} (Argent)</span>
+      <span className={`badge${vivant ? " vivant" : ""}`}>{vivant ? "Partie" : "Historique"}</span>
+      <span className="qui">{mise.libelle}</span>
     </div>
   );
 }
@@ -243,7 +217,8 @@ function SousPlateau() {
   if (vivant && humain && attente) texte = <span className="attente-decision">{attente}</span>;
   else if (vivant && humain) {
     texte = <span className="attente-decision">
-      {piece ? `${NOMS[piece]} : choisissez une case en surbrillance, ou un coup dans la liste` : "Choisissez une pièce de votre main, ou une unité sur le plateau"}
+      {img.tir ? "Draft : choisissez une carte Unité dans votre colonne"
+        : piece ? `${NOMS[piece]} : choisissez une case en surbrillance, ou un coup dans la liste` : "Choisissez une pièce de votre main, ou une unité sur le plateau"}
     </span>;
   } else if (img.a) texte = <span className="dernier">{EQUIPE[decor.equipes[img.a.j]]} : {img.a.d}</span>;
   else texte = <span className="dernier">Mise en place</span>;
@@ -373,9 +348,13 @@ function Scene() {
   const attente = useJeu(s => s.attente);
   const pieceAttente = useJeu(s => s.pieceAttente);
   const conseil = useJeu(s => s.conseil);
+  const mainsVisibles = useJeu(s => s.mainsVisibles);
+  const fini = useJeu(s => s.fini);
   if (!decor || !img) return <div className="scene"><div className="attente-partie">Préparation de la partie…</div></div>;
   const colonne = (j: number) => {
     const actif = vivant && humain && img.t === j && !attente;
+    // un seul humain : la main de l'IA est cachée, sauf à la révéler (l'analyse devient omnisciente)
+    const mainIA = !fini && joueurs[j]?.type === "ia" && joueurs.filter(x => x.type === "humain").length === 1;
     return (
       <div className="colonne-joueur">
         <Joueur decor={decor} image={img} joueur={j} nom="" role={joueurs[j]?.nom}
@@ -387,7 +366,8 @@ function Scene() {
             else st.choisirPiece(c);
           } : undefined} choisie={actif ? piece : null}
           attente={vivant && img.t === j && pieceAttente ? pieceAttente : null}
-          conseil={vivant && img.tir && conseil?.joueur === j ? conseil : null} />
+          conseil={vivant && img.tir && conseil?.joueur === j ? conseil : null}
+          mains={mainIA ? { visibles: mainsVisibles, basculer: () => useJeu.getState().reglages({ mains_visibles: !mainsVisibles }) } : undefined} />
       </div>
     );
   };

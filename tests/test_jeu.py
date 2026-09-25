@@ -91,7 +91,7 @@ def test_defense_possible_pas_de_victoire_forcee():
 
 def test_api_partie_humains_et_editeur():
     c = TestClient(app)
-    e = c.post("/api/jeu", json={"joueurs": [{"type": "humain"}, {"type": "humain"}]}).json()
+    e = c.post("/api/jeu", json={"mode": "libre", "joueurs": [{"type": "humain"}, {"type": "humain"}]}).json()
     gid = e["id"]
     assert e["humain"] and e["legal"] and e["decor"] and e["masques"] == []
     e = c.post(f"/api/jeu/{gid}/jouer?depuis={e['n']}&version={e['version']}", json={"index": 0}).json()
@@ -108,3 +108,24 @@ def test_api_partie_humains_et_editeur():
     a = c.post(f"/api/jeu/{edite['id']}/analyse").json()
     assert a["texte"] == "#1" and a["mat"]["coup"] == "Sa2^"
     assert c.post("/api/jeu", json={"position": pos(controle={"a1": 0})}).status_code == 400
+
+
+def test_api_mises_en_place():
+    c = TestClient(app)
+    h = {"joueurs": [{"type": "humain"}] * 2}
+    # draft par défaut, cartes tirées au hasard
+    e = c.post("/api/jeu", json=h).json()
+    assert e["mise"]["mode"] == "draft" and all(l["kind"] == "draft" for l in e["legal"])
+    # draft aux cartes choisies, Argent choisit en premier
+    cartes = list("ABCDEFGH")
+    e = c.post("/api/jeu", json=dict(h, cartes=cartes, premier=1)).json()
+    assert e["trait"] == 1 and sorted(l["n"] for l in e["legal"]) == cartes
+    assert e["mise"]["libelle"] == "Draft · cartes choisies"
+    assert c.post("/api/jeu", json=dict(h, cartes=list("ABCDEFGG"))).status_code == 400
+    # libre : armées choisies, modèle reconnu
+    e = c.post("/api/jeu", json=dict(h, mode="libre", armees=[list("SPXH"), list("ACLE")], premier=1)).json()
+    assert e["decor"]["unites"] == [sorted("SPXH"), sorted("ACLE")] and e["trait"] == 1
+    assert e["mise"]["libelle"] == "Libre · Première partie"
+    assert c.post("/api/jeu", json=dict(h, mode="libre", armees=[list("SPXH"), list("SCLE")])).status_code == 400
+    assert c.post("/api/jeu", json=dict(h, mode="libre", armees=[list("SPX"), list("ACLE")])).status_code == 400
+    assert c.post("/api/jeu", json=dict(h, mode="autre")).status_code == 400

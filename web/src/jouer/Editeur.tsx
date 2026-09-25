@@ -324,7 +324,8 @@ export function Editeur() {
   useEffect(() => {
     if (!regles) return;
     let e: Ed;
-    if (editeur) e = depuisPosition(editeur, regles);
+    // pendant le draft, les armées sont incomplètes : on part de la position de départ
+    if (editeur && editeur.unites.every(l => l.length === 4)) e = depuisPosition(editeur, regles);
     else {
       e = depuisPosition({ unites: regles.premiere, plateau: [], controle: {}, trait: 0, initiative: 0, manche: 1,
         joueurs: [0, 1].map(() => ({ main: [], sac: [], defausse: [], defausse_cachee: [], reserve: {} })) }, regles);
@@ -412,7 +413,6 @@ export function PanneauPosition() {
         <button type="button" disabled={pb.length > 0} onClick={() => lancer(true)} title="Humain contre humain, analyse activée">Analyser la position</button>
         <button type="button" onClick={() => maj(e => positionDepart(e, regles))}>Position de départ</button>
         <button type="button" onClick={() => maj(e => { e.plateau = {}; })}>Vider le plateau</button>
-        <button type="button" onClick={() => useJeu.getState().set({ mode: "jeu" })}>Retour à la partie</button>
       </div>
       <details className="echange">
         <summary>Copier / coller une position</summary>

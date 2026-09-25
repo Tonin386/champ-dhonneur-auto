@@ -89,7 +89,12 @@ en haut) :
 
 - **joueurs** : Humain ou IA entraînée pour chaque camp (Humain contre Humain, Humain contre IA,
   IA contre IA), avec le niveau (simulations par décision) et le modèle (meilleur modèle ou une
-  itération précise) ; face à l'IA, sa main et ses pièces jouées face cachée restent secrètes ;
+  itération précise) ; face à l'IA, sa main et ses pièces jouées face cachée restent secrètes
+  (lien « révéler » dans sa colonne) ;
+- **mise en place** (« Nouvelle partie », N) : **Draft** par défaut (mise en place avancée,
+  8 cartes tirées au hasard ou choisies une à une, premier à choisir au hasard ou imposé),
+  **Libre** (les deux armées de 4 unités composées à la main, ou d'après la première partie
+  et les batailles historiques ; Initiative au choix) ou **Position** (l'éditeur ci-dessous) ;
 - **jeu** : cliquer une pièce de la main puis une case en surbrillance, ou un coup de la liste ;
   « Annuler mon coup », parcours de la partie (← →) et « Reprendre d'ici » pour rejouer une autre
   suite ;

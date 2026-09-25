@@ -1,5 +1,10 @@
 """Page « Jouer » : parties Humain / IA entraînée, analyse de position et éditeur.
 
+Trois mises en place :
+  * draft (par défaut) : mise en place avancée du livret, 8 cartes tirées au hasard ou choisies ;
+  * libre : les deux armées de 4 unités sont composées avant la partie ;
+  * position : une position composée dans l'éditeur.
+
 Une partie est un `Film` (le même format d'images que le spectateur) prolongé coup par coup ;
 le navigateur ne reçoit que les images qui lui manquent. Revenir en arrière rejoue la partie
 depuis sa position de départ (position initiale ou position de l'éditeur).
@@ -25,14 +30,14 @@ from ..engine import FACE_DOWN, Action, Game
 from ..ia.conseil import conseil_draft, dossier_valeurs, lire_valeurs
 from ..notation import action_str, describe, export_record
 from ..position import depuis_position, position
-from ..units import FIRST_GAME, UNITS
+from ..units import BATTLES, DRAFT_POOL, FIRST_GAME, UNITS
 from .spectateur import RUNS, Film
 
 router = APIRouter(prefix="/api/jeu")
 
-SCENARIOS = {"premiere": "Première partie", "aleatoire": "Au hasard",
-             "draft": "Mise en place avancée (draft)", "NHPK/CFMG": "Gaugamèles",
-             "ACLF/HPRS": "Bannockburn", "ADNG/CXLE": "Crécy"}
+# armées toutes faites du mode libre (livret p.5 et p.14-15)
+MODELES_ARMEES = {"Première partie": FIRST_GAME, "Gaugamèles": BATTLES["gaugameles"],
+                  "Bannockburn": BATTLES["bannockburn"], "Crécy": BATTLES["crecy"]}
 NIVEAUX = {64: "Rapide", 200: "Normal", 800: "Fort"}
 
 
@@ -85,7 +90,10 @@ class Joueur(BaseModel):
 
 
 class Nouvelle(BaseModel):
-    unites: str = "premiere"
+    mode: str = "draft"                     # draft | libre (ignoré si `position`)
+    cartes: list[str] | None = None         # draft : les 8 cartes (sinon tirées au hasard)
+    armees: list[list[str]] | None = None   # libre : 4 unités par armée (sinon au hasard)
+    premier: int | None = None              # draft : premier à choisir ; libre : Initiative
     graine: int | None = None
     joueurs: list[Joueur] = [Joueur(), Joueur(type="ia")]
     position: dict | None = None    # position de l'éditeur
@@ -106,9 +114,10 @@ class Reglages(BaseModel):
 
 
 class Session:
-    def __init__(self, depart: Game, joueurs: list[Joueur], edite: bool, mains_visibles: bool):
+    def __init__(self, depart: Game, joueurs: list[Joueur], mise: dict, mains_visibles: bool):
         self.depart = depart.copy()
-        self.edite = edite
+        self.mise = mise                    # mise en place : {"mode", "libelle"}
+        self.edite = mise["mode"] == "position"
         self.mains_visibles = mains_visibles
         self.actions: list[Action] = []
         self.version = 0
@@ -230,7 +239,7 @@ def etat(s: Session, depuis: int = 0, version: int = -1) -> dict:
         "trait": tm, "humain": humain, "ia": not g.done and not humain,
         "legal": legal, "attente": g.pending_label() if g.pending and not g.done else "",
         "piece_attente": g.pending[-1].coin if humain and g.pending and g.pending[-1].kind == "priest" else None,
-        "fini": g.done, "resultat": g.result_label(), "edite": s.edite,
+        "fini": g.done, "resultat": g.result_label(), "edite": s.edite, "mise": s.mise,
         "mains_visibles": s.mains_visibles, "masques": sorted(masques),
     }
     if g.in_draft:
@@ -252,7 +261,7 @@ def regles():
         "departs": [[g.spec.names[g.spec.index[n]] for n in l] for l in g.spec.starts],
         "unites": {u: {"nom": d.name, "pieces": d.count, "max": d.max_units, "tactique": d.tactic,
                        "capacite": d.ability} for u, d in sorted(UNITS.items())},
-        "premiere": FIRST_GAME, "scenarios": SCENARIOS, "niveaux": NIVEAUX,
+        "premiere": FIRST_GAME, "armees": MODELES_ARMEES, "draft": DRAFT_POOL["2J"], "niveaux": NIVEAUX,
     }
 
 
@@ -268,28 +277,46 @@ def ia():
     return {"disponible": True, "modeles": m}
 
 
-def _unites(s: str):
-    if s in ("aleatoire", "premiere", "draft"):
-        return s
-    groupes = [list(x) for x in s.upper().split("/")]
-    if len(groupes) != 2:
-        raise HTTPException(400, "Unités : « SPXH/ACLE » attendu")
-    return groupes
+def _lettres(l: list[str], n: int, quoi: str) -> list[str]:
+    l = [u.upper() for u in l]
+    if len(l) != n or len(set(l)) != n or not set(l) <= set(UNITS):
+        raise HTTPException(400, f"{quoi} : {n} unités différentes attendues")
+    return sorted(l)
+
+
+def mise_en_place(req: Nouvelle) -> tuple[Game, dict]:
+    """Partie de départ et description de sa mise en place."""
+    if req.premier not in (None, 0, 1):
+        raise HTTPException(400, "Premier joueur : 0 (Or) ou 1 (Argent)")
+    if req.position is not None:
+        try:
+            return depuis_position(req.position, req.graine), {"mode": "position", "libelle": "Position de l'éditeur"}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    if req.mode == "draft":
+        cartes = None if req.cartes is None else _lettres(req.cartes, DRAFT_POOL["2J"], "Draft")
+        g = Game("2J", "draft", seed=req.graine, pool=cartes, draft_first=req.premier)
+        return g, {"mode": "draft", "libelle": "Draft · " + ("cartes choisies" if cartes else "cartes tirées au hasard")}
+    if req.mode == "libre":
+        if req.armees is None:
+            armees, nom = "aleatoire", "armées au hasard"
+        else:
+            if len(req.armees) != 2:
+                raise HTTPException(400, "Libre : deux armées attendues")
+            armees = [_lettres(a, 4, f"Armée {('Or', 'Argent')[k]}") for k, a in enumerate(req.armees)]
+            if set(armees[0]) & set(armees[1]):
+                raise HTTPException(400, "Libre : une unité ne peut servir que dans une armée")
+            nom = next((n for n, a in MODELES_ARMEES.items() if [sorted(x) for x in a] == armees),
+                       "armées choisies")
+        g = Game("2J", armees, seed=req.graine, first=req.premier)
+        return g, {"mode": "libre", "libelle": f"Libre · {nom}"}
+    raise HTTPException(400, "Mode de jeu : « draft » ou « libre »")
 
 
 @router.post("")
 def nouvelle(req: Nouvelle):
-    if req.position is not None:
-        try:
-            g = depuis_position(req.position, req.graine)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-    else:
-        try:
-            g = Game("2J", _unites(req.unites), seed=req.graine)
-        except (AssertionError, KeyError, ValueError) as e:
-            raise HTTPException(400, f"Mise en place invalide : {e}")
-    s = Session(g, req.joueurs, req.position is not None, req.mains_visibles)
+    g, mise = mise_en_place(req)
+    s = Session(g, req.joueurs, mise, req.mains_visibles)
     s.id = uuid.uuid4().hex[:10]
     SESSIONS[s.id] = s
     while len(SESSIONS) > 200:

@@ -1,20 +1,37 @@
 import { create } from "zustand";
 import type { Decor, Image } from "../types";
-import type { Analyse, Conseil, EtatServeur, InfoIA, JoueurCfg, Legal, Position, Regles } from "./types";
+import type { Analyse, Conseil, EtatServeur, InfoIA, JoueurCfg, Legal, Mise, Position, Regles } from "./types";
 
 export interface Config {
   joueurs: JoueurCfg[];
-  unites: string;
+  mode: "draft" | "libre";
+  /** draft : les cartes choisies (null : tirées au hasard) */
+  cartes: string[] | null;
+  /** libre : les deux armées de 4 unités */
+  armees: string[][];
+  /** draft : premier à choisir ; libre : Initiative (null : au hasard) */
+  premier: number | null;
   graine: number | null;
   mains_visibles: boolean;
 }
 
 export const CONFIG_DEFAUT: Config = {
   joueurs: [{ type: "humain", niveau: 200, modele: null }, { type: "ia", niveau: 200, modele: null }],
-  unites: "premiere",
+  mode: "draft",
+  cartes: null,
+  armees: [["H", "P", "S", "X"], ["A", "C", "E", "L"]],
+  premier: null,
   graine: null,
   mains_visibles: false,
 };
+
+/** Configuration enregistrée (les anciennes clés, comme « unites », sont oubliées). */
+function lireConfig(): Config {
+  const c = lire("champ.jouer.config", CONFIG_DEFAUT) as Config & { unites?: string };
+  const { unites: _, ...reste } = c;
+  if (!["draft", "libre"].includes(reste.mode)) reste.mode = "draft";
+  return reste;
+}
 
 export type Mode = "jeu" | "editeur";
 
@@ -39,6 +56,7 @@ interface EtatJeu {
   fini: boolean;
   resultat: string;
   edite: boolean;
+  mise: Mise | null;
   mainsVisibles: boolean;
   masques: number[];
 
@@ -134,7 +152,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       id: e.id, version: e.version, decor: e.decor ?? s.decor, images,
       joueurs: e.joueurs, trait: e.trait, humain: e.humain, ia: e.ia, legal: e.legal,
       attente: e.attente, pieceAttente: e.piece_attente, conseil: e.conseil ?? null, fini: e.fini, resultat: e.resultat,
-      edite: e.edite, mainsVisibles: e.mains_visibles, masques: e.masques, analyses,
+      edite: e.edite, mise: e.mise, mainsVisibles: e.mains_visibles, masques: e.masques, analyses,
       pos: auBout || nouvelle || s.pos >= images.length ? images.length - 1 : s.pos,
       piece: null, caseChoisie: null, survol: null, occupe: false,
     });
@@ -143,7 +161,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
   return {
     regles: null,
     infoIA: null,
-    config: lire("champ.jouer.config", CONFIG_DEFAUT),
+    config: lireConfig(),
     id: null,
     version: 0,
     decor: null,
@@ -159,6 +177,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     fini: false,
     resultat: "*",
     edite: false,
+    mise: null,
     mainsVisibles: false,
     masques: [],
     pos: 0,
@@ -262,8 +281,8 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       if (!id) return;
       try {
         recevoir(await api<EtatServeur>(`/api/jeu/${id}/reglages`, r));
-        if (r.joueurs) {
-          const config = { ...get().config, joueurs: r.joueurs };
+        if (r.joueurs || r.mains_visibles !== undefined) {
+          const config = { ...get().config, ...r };
           set({ config });
           ecrire("champ.jouer.config", config);
         }
