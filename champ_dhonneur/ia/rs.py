@@ -123,7 +123,8 @@ def jouer_parties_rs(evaluateur, P, seed: int | None = None) -> tuple[dict, dict
     t0 = time.time()
     params = {k: getattr(P, k) for k in ("parties", "simultanees", "simulations", "simulations_rapides",
                                          "p_complete", "max_manches", "m", "parallele", "c_visit",
-                                         "c_scale", "releves", "p_draft", "simulations_draft")}
+                                         "c_scale", "releves", "p_draft", "simulations_draft",
+                                         "meilleur_coup")}
     aj = champ_rs.AutoJeu(params, int(seed if seed is not None else time.time_ns()) % 2**63)
     diffuseur = DiffuseurRs(P.direct, P.parties) if getattr(P, "direct", "") else None
     lot = aj.etape()

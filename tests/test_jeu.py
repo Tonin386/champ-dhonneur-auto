@@ -129,3 +129,47 @@ def test_api_mises_en_place():
     assert c.post("/api/jeu", json=dict(h, mode="libre", armees=[list("SPXH"), list("SCLE")])).status_code == 400
     assert c.post("/api/jeu", json=dict(h, mode="libre", armees=[list("SPX"), list("ACLE")])).status_code == 400
     assert c.post("/api/jeu", json=dict(h, mode="autre")).status_code == 400
+
+
+def _flux(client, url):
+    """Événements (nom, données) d'un flux Server-Sent Events."""
+    import json
+    out, nom = [], None
+    with client.stream("GET", url) as r:
+        assert r.status_code == 200
+        for ligne in r.iter_lines():
+            if ligne.startswith("event: "):
+                nom = ligne[7:]
+            elif ligne.startswith("data: "):
+                out.append((nom, json.loads(ligne[6:])))
+    return out
+
+
+def test_analyse_progressive_et_coup_joue(monkeypatch):
+    """Analyse progressive diffusée en SSE (intermédiaires, finale, fin) ; en relecture, le coup
+    joué est évalué ; l'analyse à simulations fixes classe premier le coup que l'IA jouerait."""
+    from champ_dhonneur.bots.neural import NeuralBot
+    from champ_dhonneur.server import jeu
+    monkeypatch.setattr(jeu, "torch_present", lambda: True)
+    monkeypatch.setattr(jeu, "modeles", lambda: [{"chemin": "heur", "nom": "heuristique"}])
+    bot = NeuralBot(heuristique=True, seed=0)
+    bot.k = None
+    monkeypatch.setattr(jeu, "_analyste", lambda modele: bot)
+    c = TestClient(app)
+    e = c.post("/api/jeu", json={"mode": "libre", "premier": 0,
+                                 "joueurs": [{"type": "humain"}, {"type": "humain"}]}).json()
+    gid = e["id"]
+    joue = e["legal"][0]
+    c.post(f"/api/jeu/{gid}/jouer", json={"index": 0})
+    ev = _flux(c, f"/api/jeu/{gid}/analyse/flux?pos=0&profondeur=3")
+    assert ev[-1][0] == "fin"
+    analyses = [d for n, d in ev if n == "analyse"]      # seule la dernière est envoyée à chaque instant
+    fin = analyses[-1]
+    assert fin["profondeur"] == 3 and not fin["en_cours"] and fin["simulations"] == 32 * 7
+    # notation de l'analyse : la pièce d'un coup face cachée y figure entre accolades
+    assert fin["coups"] and fin["joue"]["coup"].startswith(joue["n"]) and fin["joue"]["rang"] >= 1
+    assert fin["coups"][0]["visites"] == max(c["visites"] for c in fin["coups"]) or fin["mat"]
+    # position finie : réponse immédiate
+    a = c.post(f"/api/jeu/{gid}/analyse?pos=1&simulations=64").json()
+    assert a["coups"] and a["simulations"] == 64
+    assert "profondeur" in a

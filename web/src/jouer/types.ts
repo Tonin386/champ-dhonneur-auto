@@ -4,6 +4,7 @@ import type { Case, Decor, Image } from "../types";
 export interface JoueurCfg {
   type: "humain" | "ia";
   niveau: number; // simulations par décision
+  duree?: number | null; // sinon : secondes de réflexion par décision
   modele: string | null;
   nom?: string;
 }
@@ -72,6 +73,7 @@ export interface CoupAnalyse {
   probabilite: number;
   q: number | null;
   visites: number;
+  part?: number; // part des simulations de la recherche consacrées à ce coup
   score: number;
   texte: string;
   ligne: string[];
@@ -92,6 +94,17 @@ export interface Analyse {
   indisponible?: string;
   fini?: string;
   simulations?: number;
+  /** recherche progressive : profondeur atteinte, horizon (coups anticipés), durée */
+  profondeur?: number | null;
+  horizon?: number;
+  horizon_max?: number | null;
+  secondes?: number;
+  en_cours?: boolean;
+  /** analyse progressive arrêtée avant sa limite (navigation, bouton « Arrêter ») */
+  arretee?: boolean;
+  /** relecture : coup joué ensuite dans la partie, son score et son écart avec le meilleur */
+  joue?: { coup: string; score: number; texte: string; visites: number; rang: number; meilleur: boolean; ecart: number;
+    mat_manque: boolean };
   v_or?: number;
   gain_or?: number; // part de la barre d'évaluation revenant à Or, dans [0, 1]
   observateur?: number; // joueur dont l'information est utilisée (hybride : l'IA)
@@ -116,6 +129,7 @@ export interface Regles {
   armees: Record<string, string[][]>; // armées toutes faites du mode libre
   draft: number; // nombre de cartes du draft
   niveaux: Record<string, string>;
+  durees: Record<string, string>; // réflexion au temps (secondes)
 }
 
 export interface InfoIA {
@@ -147,4 +161,10 @@ export interface Conseil {
   iteration: number | null;
   source: string | null;
   joueur: number;
+}
+
+/** Limite de l'analyse progressive : durée (s), profondeur, simulations, ou infinie. */
+export interface LimiteAnalyse {
+  type: "duree" | "profondeur" | "simulations" | "infini";
+  valeur: number;
 }

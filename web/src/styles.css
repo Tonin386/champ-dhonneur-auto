@@ -452,6 +452,22 @@ button.danger { background: rgba(224, 96, 74, 0.25); border-color: var(--attaque
 .det-score b { color: var(--texte); font-size: 1rem; }
 .det-score .indispo { color: var(--texte-3); }
 .det-score code { color: var(--or); }
+.recherche { display: flex; flex-direction: column; gap: 0.3rem; }
+.recherche .mesures { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; font-size: 0.85rem; color: var(--texte-2); font-variant-numeric: tabular-nums; }
+.recherche .mesures b { color: var(--texte); }
+.recherche .etat { color: var(--texte-3); font-style: italic; }
+.recherche .jauge { height: 0.25rem; border-radius: 0.2rem; background: var(--fond-2); overflow: hidden; }
+.recherche .jauge > div { height: 100%; background: var(--or-2); transition: width 0.3s linear; }
+.recherche.active .jauge > div { background: var(--or); }
+.recherche .jauge > .infinie { width: 30%; animation: jauge-infinie 1.6s ease-in-out infinite; }
+.recherche:not(.active) .jauge > .infinie { animation: none; width: 100%; }
+@keyframes jauge-infinie { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .recherche .jauge > .infinie { animation: none; width: 100%; opacity: 0.6; } }
+.coup-joue { margin: 0; font-size: 0.88rem; color: var(--texte-2); padding: 0.3rem 0.6rem; border-left: 0.2rem solid var(--bord); background: var(--fond-2); border-radius: 0.2rem; }
+.coup-joue code { color: var(--or); }
+.coup-joue b { color: var(--texte); font-variant-numeric: tabular-nums; }
+.coup-joue.bon { border-left-color: var(--ok); }
+.coup-joue.faute { border-left-color: var(--attaque); }
 .reglages-analyse { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; font-size: 0.85rem; color: var(--texte-2); }
 .reglages-analyse select { margin-left: 0.3rem; font-size: 0.85rem; }
 .case-a-cocher { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }

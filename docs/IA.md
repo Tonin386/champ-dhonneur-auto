@@ -154,6 +154,7 @@ Valeurs par défaut du code ; `configs/gpu.json` les ajuste pour un GPU. Toutes 
 | `autojeu.simultanees` | 64 | parties simultanées par processus (taille des lots d'inférence) |
 | `autojeu.m` | 16 | actions candidates Gumbel à la racine |
 | `autojeu.c_visit`, `autojeu.c_scale` | 50, 0,1 | transformation σ des Q (mctx) |
+| `autojeu.meilleur_coup` | false | coup joué = meilleur coup de la recherche, sans bruit (voir « Choix du coup ») |
 | `modele.d`, `modele.couches`, `modele.tetes`, `modele.ffn` | 192, 6, 6, 4 | taille du transformeur |
 | `lot` | 512 | taille des lots d'apprentissage |
 | `lr`, `lr_min`, `echauffement` | 1e-3, 5e-5, 300 | taux d'apprentissage (cosinus par itération) |
@@ -213,10 +214,14 @@ Ce qu'il faut surveiller :
 
 ```bash
 champ jouer --blanc humain --noir ia:400                        # 400 simulations par décision
+champ jouer --blanc humain --noir ia:t=10                       # 10 secondes de réflexion par décision
 champ jouer --noir "ia:modele=runs/principal/modeles/iter_0100.pt,t=2"
 champ evaluer runs/principal/modeles/meilleur.pt mcts:800 --paires 50 --dispositif cuda
 champ evaluer runs/principal/modeles/meilleur.pt runs/principal/modeles/iter_0050.pt
 champ analyser partie.nch --coup 42                             # meilleurs coups d'une position
+champ analyser partie.nch --coup 42 --duree 30                  # recherche progressive de 30 s
+champ analyser partie.nch --coup 42 --profondeur 12             # jusqu'à la profondeur 12
+champ analyser partie.nch --coup 42 --infini                    # sans fin, une ligne par profondeur (Ctrl-C)
 ```
 
 Le modèle par défaut est cherché dans `$CHAMP_MODELE`, `modeles/meilleur.pt`, puis
@@ -271,6 +276,33 @@ Tailles : `cpu-demo` 0,2 M paramètres, défaut 3 M, `gpu.json` 6,5 M (d = 256, 
 - **Lots.** La recherche est un générateur qui émet des requêtes d'évaluation ; un pilote regroupe
   celles de dizaines de parties en un seul appel GPU. Le bot de jeu lance ses simulations par
   vagues de 8 grâce à la perte virtuelle.
+
+### Choix du coup, score, recherche progressive
+
+- **Coup joué** (`recherche.choisir`) : parmi les coups les plus explorés (au moins la moitié des
+  simulations du plus exploré), celui dont le score logits + σ(Q) est le meilleur, sans bruit. Le
+  bot de jeu consulte d'abord le solveur exact (`score.Solveur`, avec sa seule information) et joue
+  d'office une victoire forcée. L'analyse classe les coups avec la même règle
+  (`recherche.classement`) : son premier coup est celui que l'IA jouerait.
+- **Score de la position** : celui du coup choisi. La moyenne de toutes les simulations de la
+  racine, utilisée auparavant, compte aussi les coups médiocres explorés puis écartés par le
+  halving séquentiel ; mesurée sur une partie IA contre IA, elle sous-estimait la position du
+  joueur au trait de 6 points en moyenne (13 points pour une position sur dix).
+- **Recherche progressive** (`RechercheGumbel.approfondir`, analyse et jeu au temps) :
+  approfondissement itératif. La passe d (profondeur d) est un halving séquentiel de 32·2^(d−1)
+  simulations sur les meilleurs candidats du moment ; l'arbre est conservé d'une passe à
+  l'autre. Dès 1 024 simulations par passe (profondeur 6), tous les coups légaux sont candidats. Elle
+  s'arrête à une durée, une profondeur, un nombre de simulations ou sur demande (analyse
+  infinie). Au-delà de `max_noeuds` nœuds (≈ 3 Ko chacun), l'arbre est élagué : les nœuds peu
+  visités sont retirés, les statistiques de leurs parents conservées. Chaque simulation mesure
+  son horizon, en coups (pièces jouées) anticipés.
+- **`meilleur_coup` en auto-jeu** : le coup joué est toujours le meilleur coup de la recherche. Le
+  bruit de Gumbel ne sert plus qu'à choisir les candidats des recherches complètes, donc la
+  diversité des cibles de politique. Les recherches rapides n'ont pas de bruit, comme chez
+  KataGo, et un coup qui gagne immédiatement est toujours joué. La valeur de recherche mêlée à la
+  cible de valeur (`melange_q`) est celle du coup joué, cohérente avec le résultat de la partie,
+  joué avec les meilleurs coups. La diversité des parties vient du hasard des pioches, des
+  armées et des cartes du draft.
 
 ### Auto-jeu (`autojeu.py`)
 

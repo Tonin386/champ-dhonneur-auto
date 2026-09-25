@@ -3,7 +3,7 @@
 Spécification (via make_bot) :
     ia                       modèle par défaut, 200 simulations
     ia:800                   800 simulations
-    ia:t=2                   ~2 secondes par décision
+    ia:t=2                   2 secondes par décision (recherche progressive)
     ia:modele=runs/x/modeles/meilleur.pt,sims=400,dispositif=cuda
     heur:200                 même recherche, évaluée par l'heuristique (sans réseau)
 
@@ -14,7 +14,6 @@ Le dispositif par défaut est $CHAMP_DISPOSITIF (cpu si absent).
 from __future__ import annotations
 
 import os
-import time
 from pathlib import Path
 
 from ..engine import Action, Game
@@ -60,7 +59,7 @@ class NeuralBot(Bot):
                  temps: float | None = None, dispositif: str | None = None, heuristique: bool = False,
                  seed: int | None = None):
         super().__init__(seed)
-        from ..ia.recherche import ParamsRecherche, RechercheGumbel
+        from ..ia.recherche import RechercheGumbel
         self.simulations, self.temps = simulations, temps
         dispositif = dispositif or os.environ.get("CHAMP_DISPOSITIF", "cpu")
         if heuristique:
@@ -85,24 +84,29 @@ class NeuralBot(Bot):
                 _CACHE[cle] = EvaluateurReseau.depuis_fichier(chemin, dispositif)
             self.ev = _CACHE[cle]
             par = 8   # vagues de 8 simulations : lots plus efficaces pour le réseau
-        self.recherche = RechercheGumbel(ParamsRecherche(simulations=simulations, m=32, bruit=False,
-                                                         parallele=par), seed=seed)
+        self.recherche = RechercheGumbel(params_jeu(simulations, par), seed=seed)
         self.derniere = None
+        self.mat = None
 
     def choose(self, game: Game) -> Action:
-        from ..ia.recherche import executer
+        """Meilleur coup : victoire forcée s'il y en a une (solveur exact, avec la seule information
+        du joueur), sinon celui de la recherche (budget de simulations, ou durée : `temps`)."""
+        from ..ia.recherche import Limite, executer
         legal = game.legal_actions()
+        self.derniere = self.mat = None
         if len(legal) == 1:
             return legal[0]
-        sims = self.simulations
+        if not game.in_draft:
+            from ..score import Solveur
+            mat = Solveur(game.to_move).chercher(game)
+            if mat and mat["equipe"] == game.team(game.to_move) and mat["action"] is not None:
+                self.mat = mat
+                return mat["action"]
         if self.temps:
-            # calibrage : estimation du coût d'une simulation lors du coup précédent
-            cout = getattr(self, "_cout", None)
-            sims = max(16, int(self.temps / cout)) if cout else 64
-        t0 = time.time()
-        res = executer([self.recherche.generateur(game, sims)], self.ev)[0]
-        if res.simulations:
-            self._cout = (time.time() - t0) / res.simulations
+            gen = self.recherche.approfondir(game, Limite(secondes=self.temps))
+        else:
+            gen = self.recherche.generateur(game, self.simulations)
+        res = executer([gen], self.ev)[0]
         self.derniere = res
         return res.action
 
@@ -113,6 +117,12 @@ class NeuralBot(Bot):
             return []
         order = sorted(range(len(r.legal)), key=lambda i: -r.politique[i])[:top]
         return [(r.legal[i], float(r.politique[i]), float(r.q[i]), float(r.visites[i])) for i in order]
+
+
+def params_jeu(simulations: int, parallele: int = 8):
+    """Recherche du bot de jeu et de l'analyse : sans bruit, 32 candidats à la racine."""
+    from ..ia.recherche import ParamsRecherche
+    return ParamsRecherche(simulations=simulations, m=32, bruit=False, parallele=parallele)
 
 
 def depuis_spec(arg: str, seed: int | None, heuristique: bool = False) -> NeuralBot:

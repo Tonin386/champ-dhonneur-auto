@@ -1,5 +1,5 @@
 {
- "_commentaire": "Génération 2 (draft) : entraînement sans fin, par itérations (auto-jeu → apprentissage → valeur des unités → évaluation Elo). docker compose --profile continu up -d, ou make continu. 75 % des parties d'auto-jeu commencent par la mise en place avancée (draft, recherche complète de 128 simulations à chaque choix), 25 % par des armées aléatoires. Têtes auxiliaires (Lieux, marge, main adverse), poids publiés moyennés (EMA), évaluations en protocole draft, valeur dynamique des unités dans runs/continu/unites.jsonl. Sans amorçage heuristique : tout l'auto-jeu tourne sur GPU dès la 1re itération (réseau initial aléatoire). Reprise automatique après arrêt.",
+ "_commentaire": "Génération 2 (draft) : entraînement sans fin, par itérations (auto-jeu → apprentissage → valeur des unités → évaluation Elo). docker compose --profile continu up -d, ou make continu. 75 % des parties d'auto-jeu commencent par la mise en place avancée (draft, recherche complète de 128 simulations à chaque choix), 25 % par des armées aléatoires. Têtes auxiliaires (Lieux, marge, main adverse), poids publiés moyennés (EMA), évaluations en protocole draft, valeur dynamique des unités dans runs/continu/unites.jsonl. Sans amorçage heuristique : tout l'auto-jeu tourne sur GPU dès la 1re itération (réseau initial aléatoire). Reprise automatique après arrêt. Depuis l'itération 172 : le coup joué est toujours le meilleur coup de la recherche (autojeu.meilleur_coup ; le bruit de Gumbel ne sert plus qu'à choisir les candidats des recherches complètes).",
  "dossier": "runs/continu",
  "iterations": 0,
  "travailleurs": 4,
@@ -18,7 +18,8 @@
   "m": 16,
   "parallele": 1,
   "p_draft": 0.75,
-  "simulations_draft": 128
+  "simulations_draft": 128,
+  "meilleur_coup": true
  },
  "modele": {
   "d": 160,

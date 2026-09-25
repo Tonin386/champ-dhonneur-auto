@@ -3,9 +3,11 @@ import { EQUIPE } from "../jeu";
 import { useJeu, type Config } from "./store";
 import type { InfoIA, JoueurCfg, Regles } from "./types";
 
-/** Choix d'un joueur : Humain ou IA entraînée (niveau = simulations par décision, modèle). */
-export function ChoixJoueur({ equipe, j, info, onChange, niveaux, hybride }: {
+/** Choix d'un joueur : Humain ou IA entraînée (niveau : simulations ou secondes par décision, modèle). */
+export function ChoixJoueur({ equipe, j, info, onChange, niveaux, durees = {}, hybride }: {
   equipe: number; j: JoueurCfg; info: InfoIA | null; onChange: (j: JoueurCfg) => void; niveaux: Record<string, string>;
+  /** réflexion au temps : secondes → libellé */
+  durees?: Record<string, string>;
   /** partie sur un vrai plateau : « Humain » désigne le joueur plateau */
   hybride?: boolean;
 }) {
@@ -22,8 +24,18 @@ export function ChoixJoueur({ equipe, j, info, onChange, niveaux, hybride }: {
       {j.type === "ia" && iaOk && (
         <div className="options-ia">
           <label>Niveau
-            <select value={j.niveau} onChange={e => onChange({ ...j, niveau: +e.target.value })}>
-              {Object.entries(niveaux).map(([v, l]) => <option key={v} value={v}>{l} ({v} simulations)</option>)}
+            <select value={j.duree ? `t:${j.duree}` : `s:${j.niveau}`} onChange={e => {
+              const [t, v] = e.target.value.split(":");
+              onChange(t === "t" ? { ...j, duree: +v } : { ...j, niveau: +v, duree: null });
+            }}>
+              <optgroup label="Simulations par coup">
+                {Object.entries(niveaux).map(([v, l]) => <option key={v} value={`s:${v}`}>{l} ({v} simulations)</option>)}
+              </optgroup>
+              {Object.keys(durees).length > 0 && (
+                <optgroup label="Réflexion au temps">
+                  {Object.entries(durees).map(([v, l]) => <option key={v} value={`t:${v}`}>{l} par coup</option>)}
+                </optgroup>
+              )}
             </select>
           </label>
           <label>Modèle
@@ -241,7 +253,7 @@ export function DialogueNouvelle() {
         )}
         <div className="deux-joueurs">
           {c.joueurs.map((j, k) => (
-            <ChoixJoueur key={k} equipe={k} j={j} info={info} onChange={joueur(k)} niveaux={regles?.niveaux ?? {}} hybride={c.hybride} />
+            <ChoixJoueur key={k} equipe={k} j={j} info={info} onChange={joueur(k)} niveaux={regles?.niveaux ?? {}} durees={regles?.durees} hybride={c.hybride} />
           ))}
         </div>
         {!info?.disponible && info?.raison && <p className="remarque">IA indisponible : {info.raison}.</p>}

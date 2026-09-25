@@ -164,6 +164,16 @@ def test_autojeu_rust_produit_des_exemples_valides():
     assert EvaluateurUniforme  # l'évaluateur Python reste disponible pour le chemin Python
 
 
+def test_autojeu_rust_meilleur_coup():
+    """Coup joué sans bruit, recherches rapides sans bruit, coup gagnant toujours joué."""
+    from champ_dhonneur.ia.autojeu import ParamsAutoJeu
+    P = ParamsAutoJeu(parties=6, simultanees=3, simulations=16, simulations_rapides=4,
+                      max_manches=20, meilleur_coup=True, p_draft=0.5)
+    data, st = rs.jouer_parties_rs(rs.EvaluateurLotUniforme(), P, seed=3)
+    assert st["parties"] == 6 and len(data["z"]) > 0
+    assert np.allclose(data["pi"].astype(np.float32).sum(1), 1, atol=1e-2)
+
+
 def test_direct_moteur_rust(tmp_path):
     """Le fichier de direct écrit par l'auto-jeu Rust se rejoue dans le moteur Python."""
     import json

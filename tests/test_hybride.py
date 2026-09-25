@@ -132,6 +132,7 @@ class BotFactice:
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(jeu, "torch_present", lambda: True)
+    monkeypatch.setattr(jeu, "modeles", lambda: [])   # analyse sans réseau, quels que soient les runs présents
     import champ_dhonneur.bots.neural as neural
     monkeypatch.setattr(neural, "NeuralBot", BotFactice)
     return TestClient(app)

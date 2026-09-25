@@ -53,19 +53,32 @@ function usePilote() {
   }, [ia, n, occupe, panne, lecture, vitesse, mode, joueurs, pos, pilotage]);
 }
 
-/** Analyse automatique de la position affichée. */
+/** Analyse automatique de la position affichée : quitter une position arrête son analyse (elle
+ *  reprend au retour si elle n'était pas terminée) ; une analyse arrêtée au bouton ne repart pas.
+ *  Pendant que l'IA réfléchit, pas d'analyse : elle lui prendrait du temps de calcul. */
 function useAnalyseAuto() {
   const analyse = useAnalyseActive();
   const pos = useJeu(s => s.pos);
   const id = useJeu(s => s.id);
-  const fait = useJeu(s => !!s.analyses[s.pos]);
+  const fait = useJeu(s => {
+    const a = s.analyses[s.pos];
+    return !!a && (!a.en_cours || !!a.arretee);
+  });
   const enAnalyse = useJeu(s => s.enAnalyse);
   const mode = useJeu(s => s.mode);
+  const iaReflechit = useJeu(s => s.occupe && s.ia);
   useEffect(() => {
-    if (!analyse || !id || fait || enAnalyse !== null || mode !== "jeu") return;
+    const s = useJeu.getState();
+    if (!analyse || !id || mode !== "jeu" || iaReflechit) {
+      if (enAnalyse !== null) s.arreterAnalyse();
+      return;
+    }
+    if (enAnalyse === pos) return;
+    if (enAnalyse !== null) s.arreterAnalyse();
+    if (fait) return;
     const t = setTimeout(() => useJeu.getState().analyser(pos), 150);
     return () => clearTimeout(t);
-  }, [analyse, pos, id, fait, enAnalyse, mode]);
+  }, [analyse, pos, id, fait, enAnalyse, mode, iaReflechit]);
 }
 
 const aidesVisibles = () => {
@@ -144,7 +157,7 @@ function Statut() {
     etiquette = humain
       ? (hybride ? "Joueur plateau : saisissez son coup"
         : joueurs.filter(j => j.type === "humain").length > 1 ? `${qui} : à vous de jouer` : "À vous de jouer")
-      : pause ? "En pause" : `${qui} réfléchit…`;
+      : pause ? "En pause" : `${qui} réfléchit${joueurs[trait]?.duree ? ` (${joueurs[trait].duree} s)` : ""}…`;
     detail = attente || `manche ${img.r} · ${qui} au trait`;
     cls = humain ? "humain" : "ia";
   }

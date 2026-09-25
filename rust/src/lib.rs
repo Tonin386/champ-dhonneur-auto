@@ -212,6 +212,7 @@ impl AutoJeu {
             releves: lire(params, "releves", 0usize)?,
             p_draft: lire(params, "p_draft", 0.0f64)?,
             simulations_draft: lire(params, "simulations_draft", 128usize)?,
+            meilleur_coup: lire(params, "meilleur_coup", false)?,
         };
         Ok(AutoJeu { a: AutoJeuRs::new(p, graine) })
     }

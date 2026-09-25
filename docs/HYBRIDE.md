@@ -133,9 +133,13 @@ Ce que la solution garantit :
    La même garantie vaut pour les parties à l'écran contre l'IA.
 4. **Pioches futures simulées** : la recherche tire les pioches futures avec son propre
    générateur, jamais avec celui du moteur, qui en partie à l'écran détermine les vraies pioches.
-5. **Analyse** : elle est toujours calculée du point de vue de l'IA. Elle est indisponible quand
-   le joueur plateau a le trait, car ses « meilleurs coups » seraient ceux d'une main fictive.
-6. **Affichage** : la main du joueur plateau et ses pièces face cachée restent masquées, même en
+5. **Choix du coup** : l'IA joue d'office une victoire forcée trouvée par le solveur exact (avec
+   sa seule information), sinon le meilleur coup de sa recherche. Elle peut réfléchir à un nombre
+   fixe de simulations ou pendant une durée par coup (« Réflexion au temps »).
+6. **Analyse** : elle est toujours calculée du point de vue de l'IA. Quand le joueur plateau a le
+   trait, elle ne donne que l'évaluation vue par l'IA (moyenne sur des mains possibles), sans
+   meilleurs coups : ce seraient ceux d'une main fictive.
+7. **Affichage** : la main du joueur plateau et ses pièces face cachée restent masquées, même en
    fin de partie, puisqu'elles sont fictives.
 
 Deux limites, qui ne sont pas des fuites :

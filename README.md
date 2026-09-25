@@ -58,13 +58,15 @@ champ entrainer --config configs/rtx-a5000-laptop.json  # entraînement complet
 champ suivi runs/principal                            # tableau de bord
 champ jouer --blanc humain --noir ia:400              # jouer contre le réseau
 champ analyser partie.nch --coup 30                   # score, victoire forcée, meilleurs coups
+champ analyser partie.nch --coup 30 --duree 30        # analyse progressive : 30 s, --profondeur 12, --infini
 champ calibrer runs/continu/parties                   # recalcule l'échelle du score
 ```
 
 Options d'unités : `premiere` (répartition conseillée du livret), `aleatoire`, ou explicite
 `SPXH/ACLE` (Or/Argent, appelés Blanc/Noir en console). Bots : `aleatoire`, `glouton`, `mcts`, `mcts:2000` (itérations),
 `mcts:t=3` (secondes par décision), `heur:200` (recherche Gumbel guidée par l'heuristique),
-`ia`, `ia:800`, `ia:t=2`, `ia:modele=chemin.pt,sims=400,dispositif=cuda` (réseau entraîné).
+`ia`, `ia:800`, `ia:t=2` (2 secondes de réflexion par décision),
+`ia:modele=chemin.pt,sims=400,dispositif=cuda` (réseau entraîné).
 
 ## Spectateur grand écran
 
@@ -92,8 +94,9 @@ F (plein écran), 1–9 (table). Survolez le titre d'un graphique pour savoir ce
 en haut) :
 
 - **joueurs** : Humain ou IA entraînée pour chaque camp (Humain contre Humain, Humain contre IA,
-  IA contre IA), avec le niveau (simulations par décision) et le modèle (meilleur modèle ou une
-  itération précise) ; face à l'IA, sa main et ses pièces jouées face cachée restent secrètes
+  IA contre IA), avec le niveau (simulations par décision, ou réflexion au temps : 5 s à 1 min
+  par coup) et le modèle (meilleur modèle ou une itération précise). L'IA joue d'office une
+  victoire forcée, sinon le meilleur coup de sa recherche ; face à l'IA, sa main et ses pièces jouées face cachée restent secrètes
   (lien « révéler » dans sa colonne) ;
 - **mise en place** (« Nouvelle partie », N) : **Draft** par défaut (mise en place avancée,
   8 cartes tirées au hasard ou choisies une à une, premier à choisir au hasard ou imposé),
@@ -115,7 +118,12 @@ en haut) :
   humain (IA contre IA), elles sont toujours disponibles ;
 - **analyse** (A) : le réseau évalue la position affichée, à tout moment de la partie, avec une
   barre d'évaluation, ses meilleurs coups et la suite qu'il attend, et une courbe de l'évaluation.
-  Face à l'IA, l'analyse n'utilise que l'information du joueur humain ;
+  L'analyse est progressive, comme celle d'un moteur d'échecs : elle approfondit par passes
+  (profondeur, horizon en coups anticipés, simulations) et s'affiche au fur et à mesure, jusqu'à
+  une durée (1 s à 5 min), une profondeur, un nombre de simulations, ou sans limite (analyse
+  infinie, bouton « Arrêter »). Ses coups sont classés comme l'IA choisit le sien : le premier est
+  celui qu'elle jouerait. En relecture, le coup joué ensuite est évalué, avec son écart au
+  meilleur coup. Face à l'IA, l'analyse n'utilise que l'information du joueur humain ;
 - **parties** : chaque partie (dès sa première décision) est enregistrée dans `./parties`
   (`CHAMP_PARTIES`, un fichier JSON par partie) ; la fenêtre « Parties » liste les parties en
   cours et terminées, à reprendre, revoir ou supprimer. Recharger la page reprend la partie

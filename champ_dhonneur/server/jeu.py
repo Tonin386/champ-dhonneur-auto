@@ -25,6 +25,7 @@ l'information du joueur humain.
 """
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import logging
@@ -36,8 +37,8 @@ import uuid
 from collections import Counter
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..engine import FACE_DOWN, Action, Game, IllegalAction
@@ -47,7 +48,7 @@ from ..ia.conseil import conseil_draft, dossier_valeurs, lire_valeurs
 from ..notation import action_str, describe, export_record
 from ..position import depuis_position, position
 from ..units import BATTLES, DRAFT_POOL, FIRST_GAME, UNITS
-from .spectateur import RUNS, Film
+from .spectateur import RUNS, Film, _evenement
 
 router = APIRouter(prefix="/api/jeu")
 PARTIES = Path(os.environ.get("CHAMP_PARTIES", "parties"))
@@ -57,7 +58,9 @@ _journal = logging.getLogger(__name__)
 # armées toutes faites du mode libre (livret p.5 et p.14-15)
 MODELES_ARMEES = {"Première partie": FIRST_GAME, "Gaugamèles": BATTLES["gaugameles"],
                   "Bannockburn": BATTLES["bannockburn"], "Crécy": BATTLES["crecy"]}
-NIVEAUX = {64: "Rapide", 200: "Normal", 800: "Fort"}
+NIVEAUX = {64: "Rapide", 200: "Normal", 800: "Fort", 3200: "Très fort"}
+# réflexion au temps : l'IA cherche pendant cette durée (recherche progressive), en secondes
+DUREES = {5: "5 s", 15: "15 s", 30: "30 s", 60: "1 min"}
 
 
 # ------------------------------------------------------------------ modèles
@@ -105,6 +108,7 @@ def _modele_valide(chemin: str | None) -> str | None:
 class Joueur(BaseModel):
     type: str = "humain"            # humain | ia
     niveau: int = 200               # simulations par décision
+    duree: float | None = None      # sinon : secondes de réflexion par décision
     modele: str | None = None
 
 
@@ -194,6 +198,8 @@ class Session:
             if j.type != "ia":
                 continue
             j.niveau = max(16, min(3200, j.niveau))
+            if j.duree is not None:
+                j.duree = max(0.5, min(600.0, float(j.duree)))
             try:
                 if not torch_present():
                     raise HTTPException(400, "PyTorch absent")
@@ -204,15 +210,15 @@ class Session:
                         raise
                     j.modele = None               # modèle disparu : meilleur modèle actuel
                 ancien = self.bots.get(i)
-                if ancien is not None and getattr(ancien, "_spec", None) == (j.niveau, j.modele):
+                if ancien is not None and getattr(ancien, "_spec", None) == (j.niveau, j.duree, j.modele):
                     bots[i] = ancien
                     continue
                 from ..bots.neural import NeuralBot
                 try:
-                    b = NeuralBot(modele=j.modele, simulations=j.niveau, seed=i)
+                    b = NeuralBot(modele=j.modele, simulations=j.niveau, temps=j.duree, seed=i)
                 except (FileNotFoundError, ValueError) as e:
                     raise HTTPException(400, f"IA indisponible : {e}")
-                b._spec = (j.niveau, j.modele)
+                b._spec = (j.niveau, j.duree, j.modele)
                 bots[i] = b
             except HTTPException:
                 if not tolerant:
@@ -469,6 +475,8 @@ def nom_joueur(j: Joueur) -> str:
     if j.type == "humain":
         return "Humain"
     niveau = NIVEAUX.get(j.niveau, f"{j.niveau} simulations")
+    if j.duree is not None:
+        niveau = DUREES.get(j.duree, f"{j.duree:g} s") + " par coup"
     m = next((x["nom"] for x in modeles() if x["chemin"] == j.modele), None) if j.modele else None
     return f"IA {niveau.lower()}" + (f" — {m}" if m else "")
 
@@ -568,6 +576,7 @@ def regles():
         "unites": {u: {"nom": d.name, "pieces": d.count, "max": d.max_units, "tactique": d.tactic,
                        "capacite": d.ability} for u, d in sorted(UNITS.items())},
         "premiere": FIRST_GAME, "armees": MODELES_ARMEES, "draft": DRAFT_POOL["2J"], "niveaux": NIVEAUX,
+        "durees": DUREES,
     }
 
 
@@ -694,6 +703,7 @@ def coup_ia(gid: str, depuis: int = 0, version: int = -1):
         if not g.done and s.joueurs[g.to_move].type == "ia" and not (s.hybride and s.requis()):
             if g.to_move not in s.bots:
                 raise HTTPException(400, "IA indisponible sur ce serveur : la partie reste consultable")
+            _arreter_analyse()      # une analyse en cours prendrait la moitié du temps de réflexion de l'IA
             s.jouer_etape(s.bots[g.to_move].choose(g))
             s.enregistrer()
         return etat(s, depuis, version)
@@ -805,46 +815,98 @@ def releve(gid: str):
 
 
 # ------------------------------------------------------------------ analyse
+# Une seule analyse à la fois (le GPU est partagé) : lancer une analyse arrête la précédente.
 _ANALYSTE: dict = {}
 _ANALYSTE_VERROU = threading.Lock()
+_EN_COURS: "_Travail | None" = None
+_EN_COURS_VERROU = threading.Lock()
+MAINS_ANALYSE = 4        # hybride : mains possibles du joueur plateau moyennées par l'analyse
+SIMS_PAR_MAIN = 256      # hybride, analyse progressive : simulations par main possible
 
 
-def _analyste(simulations: int, modele: str | None):
+def _analyste(modele: str | None):
     from ..bots.neural import modele_par_defaut
     from ..ia.analyse import bot_analyse
     chemin = modele or modele_par_defaut()
-    cle = (simulations, chemin, chemin and os.path.getmtime(chemin))
+    cle = (chemin, chemin and os.path.getmtime(chemin))
     if cle not in _ANALYSTE:
         _ANALYSTE.clear()
-        _ANALYSTE[cle] = bot_analyse(simulations, chemin)
+        _ANALYSTE[cle] = bot_analyse(400, chemin)
     return _ANALYSTE[cle]
 
 
-@router.post("/{gid}/analyse")
-def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: str | None = None):
-    """Évaluation (10 = un bastion d'avance, + pour Or), victoire forcée et meilleurs coups."""
+class _Travail:
+    """Analyse progressive exécutée dans un fil : dernière analyse publiée, arrêt demandé."""
+
+    def __init__(self):
+        self.arret = threading.Event()
+        self.dernier: dict | None = None
+        self.version = 0
+        self.fini = False
+        self.erreur: str | None = None
+
+    def publier(self, a: dict) -> None:
+        self.dernier = a
+        self.version += 1
+
+
+def _arreter_analyse() -> None:
+    with _EN_COURS_VERROU:
+        if _EN_COURS is not None:
+            _EN_COURS.arret.set()
+
+
+def _lancer(fonction) -> _Travail:
+    """Lance `fonction(travail)` dans un fil, après avoir arrêté l'analyse précédente."""
+    global _EN_COURS
+    t = _Travail()
+    with _EN_COURS_VERROU:
+        if _EN_COURS is not None:
+            _EN_COURS.arret.set()
+        _EN_COURS = t
+
+    def executer():
+        try:
+            with _ANALYSTE_VERROU:
+                if not t.arret.is_set():
+                    fonction(t)
+        except HTTPException as e:
+            t.erreur = str(e.detail)
+        except Exception as e:  # noqa: BLE001 — l'erreur est transmise au navigateur
+            _journal.exception("Analyse")
+            t.erreur = str(e)
+        finally:
+            t.fini = True
+
+    threading.Thread(target=executer, daemon=True, name="analyse").start()
+    return t
+
+
+def _preparer(gid: str, pos: int | None, modele: str | None) -> tuple[dict | None, dict]:
+    """Position à analyser. Renvoie (réponse immédiate, None) si aucune recherche n'est nécessaire
+    (partie finie, IA au trait, réseau absent), sinon (None, contexte de la recherche)."""
     from ..score import Solveur, appreciation, bastions, texte_mat, texte_score
     s = session(gid)
     with s.lock:
         n = len(s.actions) if pos is None else max(0, min(pos, len(s.actions)))
         g = s.jeu_a(n)
         masques = set() if g.done else s.masques()
+        joue = s.actions[n] if n < len(s.actions) else None
     base = {"pos": n, "trait": g.to_move, "bastions": bastions(g)}
     if g.done:
         return dict(base, fini=g.result_label(), texte=g.result_label().replace("1/2-1/2", "½-½"), coups=[],
                     score=0.0 if g.winner is None else (99.9 if g.winner == 0 else -99.9),
-                    gain_or=0.5 if g.winner is None else float(g.winner == 0))
+                    gain_or=0.5 if g.winner is None else float(g.winner == 0)), {}
     vue_ia = s.hybride and g.to_move in masques
     if g.to_move in masques and not vue_ia:
         base["coups"] = []
         return dict(base, indisponible="L'IA réfléchit : l'analyse reprend à votre tour "
-                                       "(elle n'utilise que ce que vous savez).")
+                                       "(elle n'utilise que ce que vous savez)."), {}
     observateur = s.ia if vue_ia else (g.to_move if masques else None)
     if observateur is not None:
         base["observateur"] = observateur
     modele = _modele_valide(modele)
-    ia_ok = torch_present() and (modele or modeles())
-    if not ia_ok:
+    if not (torch_present() and (modele or modeles())):
         mat = Solveur(observateur).chercher(g)
         b = bastions(g)
         score = 10.0 * (b[0] - b[1])
@@ -855,60 +917,156 @@ def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: st
             out.update(texte=texte_mat(mat["equipe"], mat["coups"]),
                        mat={"equipe": mat["equipe"], "coups": mat["coups"],
                             "coup": mat["action"] and action_str(g, mat["action"], hidden=False)})
-        return _gain(out)
-    from ..ia.analyse import analyser
-    simulations = max(32, min(3200, simulations))
-    if vue_ia:
-        return _gain(_analyse_vue_ia(g, s.ia, n, simulations, modele, base))
-    with _ANALYSTE_VERROU:
-        try:
-            bot = _analyste(simulations, modele)
-        except (FileNotFoundError, ImportError) as e:
-            raise HTTPException(400, f"IA indisponible : {e}")
-        r = analyser(g, bot, top=6, observateur=observateur)
+        return _gain(out), {}
+    # relecture : coup joué ensuite dans la partie (celui du joueur plateau est fictif en hybride)
+    if joue is not None and s.hybride and g.to_move == s.plateau:
+        joue = None
+    return None, {"g": g, "base": base, "observateur": observateur, "vue_ia": vue_ia, "ia": s.hybride and s.ia,
+                  "modele": modele, "joue": joue}
+
+
+def _completer(g: Game, r: dict, base: dict) -> dict:
+    """Réponse de l'analyse : index de chaque coup parmi les coups légaux (pour le jouer)."""
     legal = g.legal_actions()
+    coups = []
     for c in r["coups"]:
+        c = dict(c)
         action = c.pop("action")
         c["cases"] = list(action.cells)
-        c["i"] = legal.index(action)            # index du coup pour le jouer depuis l'analyse
-    return _gain(dict(base, source="reseau", **{k: v for k, v in r.items() if k != "bastions"}))
+        c["i"] = legal.index(action)
+        coups.append(c)
+    return _gain(dict(base, source="reseau", **{k: v for k, v in r.items() if k not in ("bastions", "coups")},
+                      coups=coups))
 
 
-MAINS_ANALYSE = 4    # hybride : mains possibles du joueur plateau moyennées par l'analyse
+def _analyser(ctx: dict, limite=None, suivi=None, simulations: int = 400) -> dict:
+    """Recherche (sous _ANALYSTE_VERROU) ; `limite` : recherche progressive, sinon `simulations`."""
+    from ..ia.analyse import analyser
+    try:
+        bot = _analyste(ctx["modele"])
+    except (FileNotFoundError, ImportError) as e:
+        raise HTTPException(400, f"IA indisponible : {e}")
+    g, base = ctx["g"], ctx["base"]
+    if ctx["vue_ia"]:
+        return _analyse_vue_ia(g, ctx["ia"], base, bot, limite, suivi, simulations)
+    bot.simulations = simulations
+    rappel = (lambda r: suivi(_completer(g, r, base))) if suivi is not None else None
+    r = analyser(g, bot, top=6, observateur=ctx["observateur"], limite=limite, suivi=rappel, joue=ctx["joue"])
+    return _completer(g, r, base)
 
 
-def _analyse_vue_ia(g: Game, ia: int, pos: int, simulations: int, modele: str | None, base: dict) -> dict:
+@router.post("/{gid}/analyse")
+def analyse(gid: str, pos: int | None = None, simulations: int = 400, modele: str | None = None):
+    """Évaluation (10 = un bastion d'avance, + pour Or), victoire forcée et meilleurs coups, avec un
+    nombre fixe de simulations. L'analyse progressive (durée, profondeur, infinie) : /analyse/flux."""
+    immediate, ctx = _preparer(gid, pos, modele)
+    if immediate is not None:
+        return immediate
+    _arreter_analyse()
+    with _ANALYSTE_VERROU:
+        return _analyser(ctx, simulations=max(32, min(3200, simulations)))
+
+
+@router.get("/{gid}/analyse/flux")
+async def analyse_flux(gid: str, request: Request, pos: int | None = None, secondes: float | None = None,
+                       profondeur: int | None = None, simulations: int | None = None, modele: str | None = None):
+    """Analyse progressive, diffusée en Server-Sent Events : événements `analyse` (analyse
+    intermédiaire, puis finale), `erreur`, puis `fin`. Limites : `secondes`, `profondeur`,
+    `simulations` (la première atteinte l'arrête) ; aucune : analyse infinie, jusqu'à ce que le
+    navigateur ferme la connexion. Une nouvelle analyse arrête la précédente."""
+    from ..ia.recherche import Limite
+    immediate, ctx = await asyncio.to_thread(_preparer, gid, pos, modele)
+
+    async def une(a: dict):
+        yield _evenement("analyse", a)
+        yield _evenement("fin", {})
+
+    if immediate is not None:
+        return StreamingResponse(une(immediate), media_type="text/event-stream", headers=_SANS_CACHE)
+    limite = Limite(simulations=max(32, simulations) if simulations else None,
+                    secondes=max(0.2, min(3600.0, secondes)) if secondes else None,
+                    profondeur=max(1, min(24, profondeur)) if profondeur else None)
+    t = _lancer(lambda t: t.publier(_analyser(ctx, Limite(**{**limite.__dict__, "arret": t.arret}), t.publier)))
+
+    async def generer():
+        vu, dernier_envoi = 0, time.monotonic()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                fini = t.fini
+                if t.version != vu and t.dernier is not None:
+                    vu = t.version
+                    yield _evenement("analyse", t.dernier)
+                    dernier_envoi = time.monotonic()
+                if fini:
+                    if t.erreur:
+                        yield _evenement("erreur", {"detail": t.erreur})
+                    yield _evenement("fin", {})
+                    break
+                if time.monotonic() - dernier_envoi > 15:
+                    yield ": attente\n\n"          # garde la connexion ouverte (proxys)
+                    dernier_envoi = time.monotonic()
+                await asyncio.sleep(0.2)
+        finally:
+            t.arret.set()
+
+    return StreamingResponse(generer(), media_type="text/event-stream", headers=_SANS_CACHE)
+
+
+_SANS_CACHE = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+def _analyse_vue_ia(g: Game, ia: int, base: dict, bot, limite, suivi, simulations: int) -> dict:
     """Hybride, joueur plateau au trait : sa main est inconnue. Évaluation vue par l'IA, moyenne sur
-    quelques mains compatibles avec ce qu'elle sait (déterminisations) ; pas de meilleurs coups,
-    qui seraient ceux d'une main supposée. Victoire forcée : celle de l'IA, quelle que soit la main."""
+    des mains compatibles avec ce qu'elle sait (déterminisations) ; pas de meilleurs coups, qui
+    seraient ceux d'une main supposée. Victoire forcée : celle de l'IA, quelle que soit la main.
+
+    Sans `limite` : MAINS_ANALYSE mains se partagent `simulations`. Avec : SIMS_PAR_MAIN simulations
+    par main, autant de mains que la limite le permet (une profondeur d vaut le budget de la
+    recherche progressive à cette profondeur, 32·(2^d − 1) simulations)."""
     import random
 
     from ..ia.analyse import analyser
     from ..score import Solveur, appreciation, depuis_valeur, texte_mat, texte_score
-    par_main = max(32, simulations // MAINS_ANALYSE)
-    vs, k = [], None
-    with _ANALYSTE_VERROU:
-        try:
-            bot = _analyste(par_main, modele)
-        except (FileNotFoundError, ImportError) as e:
-            raise HTTPException(400, f"IA indisponible : {e}")
-        for m in range(MAINS_ANALYSE):
-            d = g.determinize(ia, random.Random(7919 * pos + m))
-            r = analyser(d, bot, top=1, solveur=False)
-            vs.append(r["v_or"])
-            k = r.get("k")
-    v_or = sum(vs) / len(vs)
-    score = depuis_valeur(v_or, k)
-    out = dict(base, source="reseau", coups=[], v_or=round(v_or, 3), score=round(score, 1), k=k,
-               texte=texte_score(score), appreciation=appreciation(score), mat=None,
-               simulations=par_main * MAINS_ANALYSE, mains=MAINS_ANALYSE)
     mat = Solveur(ia).chercher(g)
-    if mat:
-        out.update(texte=texte_mat(mat["equipe"], mat["coups"]), score=99.9 if mat["equipe"] == 0 else -99.9,
-                   mat={"equipe": mat["equipe"], "coups": mat["coups"], "coup": None},
-                   appreciation=("+−" if mat["equipe"] == 0 else "−+",
-                                 f"Victoire forcée {('Or', 'Argent')[mat['equipe']]} en {mat['coups']}"))
-    return out
+    if limite is None:
+        par_main, max_mains = max(32, simulations // MAINS_ANALYSE), MAINS_ANALYSE
+    else:
+        par_main, max_mains = SIMS_PAR_MAIN, None
+        if limite.profondeur is not None:
+            max_mains = max(1, 32 * (2 ** limite.profondeur - 1) // SIMS_PAR_MAIN)
+    bot.simulations = par_main
+    vs, k, debut = [], None, time.monotonic()
+
+    def rapport(en_cours: bool) -> dict:
+        v_or = sum(vs) / len(vs)
+        score = depuis_valeur(v_or, k)
+        out = dict(base, source="reseau", coups=[], v_or=round(v_or, 3), score=round(score, 1), k=k,
+                   texte=texte_score(score), appreciation=appreciation(score), mat=None,
+                   simulations=par_main * len(vs), mains=len(vs), en_cours=en_cours,
+                   secondes=round(time.monotonic() - debut, 2))
+        if mat:
+            out.update(texte=texte_mat(mat["equipe"], mat["coups"]), score=99.9 if mat["equipe"] == 0 else -99.9,
+                       mat={"equipe": mat["equipe"], "coups": mat["coups"], "coup": None},
+                       appreciation=("+−" if mat["equipe"] == 0 else "−+",
+                                     f"Victoire forcée {('Or', 'Argent')[mat['equipe']]} en {mat['coups']}"))
+        return _gain(out)
+
+    m = 0
+    while True:
+        d = g.determinize(ia, random.Random(7919 * base["pos"] + m))
+        r = analyser(d, bot, top=1, solveur=False)
+        vs.append(r["v_or"])
+        k = r.get("k")
+        m += 1
+        if max_mains is not None and m >= max_mains:
+            break
+        if limite is not None and limite.atteinte(par_main * m, debut):
+            break
+        if suivi is not None:
+            suivi(rapport(True))
+    return rapport(False)
 
 
 def _gain(out: dict) -> dict:

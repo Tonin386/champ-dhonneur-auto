@@ -6,7 +6,7 @@
 //! liste vide signifie que la recherche est terminée (voir [`Recherche::resultat`]).
 
 use crate::encodage::{encoder_actions, encoder_etat, Observation};
-use crate::moteur::{Action, Partie};
+use crate::moteur::{Action, Partie, CONTROL};
 use crate::rng::Rapide;
 
 #[derive(Clone, Copy)]
@@ -20,6 +20,11 @@ pub struct ParamsRecherche {
     pub bruit: bool,
     pub parallele: usize,
     pub perte_virtuelle: f64,
+    /// coup joué tiré avec le bruit de Gumbel (faux : le meilleur coup de la recherche, le bruit
+    /// ne servant qu'à choisir les candidats explorés)
+    pub bruit_coup: bool,
+    /// un coup qui gagne immédiatement est toujours joué
+    pub coup_gagnant: bool,
 }
 
 impl Default for ParamsRecherche {
@@ -34,6 +39,8 @@ impl Default for ParamsRecherche {
             bruit: true,
             parallele: 1,
             perte_virtuelle: 1.0,
+            bruit_coup: true,
+            coup_gagnant: false,
         }
     }
 }
@@ -415,6 +422,23 @@ impl Recherche {
         q.iter().map(|&v| (self.p.c_visit + max_n) * self.p.c_scale * (v - lo) / e).collect()
     }
 
+    /// Premier coup qui gagne immédiatement (dernier marqueur Contrôle posé). La victoire ne dépend
+    /// que des marqueurs, information publique : le test se fait sur une copie de la partie.
+    fn coup_gagnant(&self) -> Option<usize> {
+        let equipe = self.equipe as usize;
+        if self.jeu.e.marqueurs[equipe] != 1 {
+            return None;
+        }
+        (0..self.legal.len()).find(|&i| {
+            let a = &self.legal[i];
+            if a.genre != CONTROL {
+                return false;
+            }
+            let mut g = self.jeu.clone();
+            g.jouer(a).is_ok() && g.e.fini && g.e.gagnant == self.equipe as i8
+        })
+    }
+
     fn terminer(&mut self) {
         let k = self.legal.len();
         let q = self.q_complete();
@@ -422,23 +446,27 @@ impl Recherche {
         let z: Vec<f64> = (0..k).map(|i| self.logits[i] + sig[i]).collect();
         let pi = softmax(&z);
         let visites: Vec<f64> = (0..k).map(|i| self.noeuds[i + 1].n).collect();
-        let meilleur = if k == 1 {
+        let g: Vec<f64> = if self.p.bruit_coup { self.gumbel.clone() } else { vec![0.0; k] };
+        let mut meilleur = if k == 1 {
             0
         } else if self.utilisees == 0 {
             (0..k)
-                .max_by(|&a, &b| {
-                    (self.gumbel[a] + self.logits[a]).partial_cmp(&(self.gumbel[b] + self.logits[b])).unwrap().then(b.cmp(&a))
-                })
+                .max_by(|&a, &b| (g[a] + self.logits[a]).partial_cmp(&(g[b] + self.logits[b])).unwrap().then(b.cmp(&a)))
                 .unwrap()
         } else {
             let mut best = self.cand[0];
             for &i in &self.cand {
-                if self.gumbel[i] + self.logits[i] + sig[i] > self.gumbel[best] + self.logits[best] + sig[best] {
+                if g[i] + self.logits[i] + sig[i] > g[best] + self.logits[best] + sig[best] {
                     best = i;
                 }
             }
             best
         };
+        if self.p.coup_gagnant && k > 1 {
+            if let Some(i) = self.coup_gagnant() {
+                meilleur = i;
+            }
+        }
         let r = &self.noeuds[0];
         self.resultat = Some(Resultat {
             action: self.legal[meilleur],

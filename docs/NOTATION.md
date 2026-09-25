@@ -173,3 +173,18 @@ quelle que soit sa main réelle.
 La **ligne** qui accompagne chaque coup proposé est la suite la plus explorée par la recherche,
 en notation publique, un coup par pièce jouée : `Ed4-c3  Xb1-b2  Ec3^`.
 
+**Score de la position, score des coups.** Chaque coup proposé a le score de la recherche après
+ce coup. Le score de la position est celui du coup que l'IA jouerait, le premier de la liste,
+comme pour un moteur d'échecs. Les coups sont classés comme l'IA choisit le sien : d'abord les
+plus explorés (au moins la moitié des simulations du plus exploré), puis par score. Le
+pourcentage affiché est la part des simulations consacrées au coup : un score peu exploré est
+moins sûr, et un coup jamais exploré n'a pas de score (`—`).
+
+**Durée, profondeur, analyse infinie.** L'analyse est progressive, comme celle d'un moteur
+d'échecs : elle approfondit par passes successives et s'affiche au fur et à mesure. La
+*profondeur* compte les passes terminées ; chaque passe double le nombre de simulations (32 pour
+la profondeur 1, 32 · (2^d − 1) au total à la profondeur d). L'*horizon* est le nombre de coups que
+les simulations anticipent, en moyenne et au plus loin. On l'arrête au bout d'une durée, à une
+profondeur, après un nombre de simulations, ou jamais (analyse infinie, jusqu'à l'arrêt). En
+relecture, le coup joué ensuite dans la partie est évalué avec son écart au meilleur coup.
+

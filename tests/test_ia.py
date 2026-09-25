@@ -9,7 +9,8 @@ from champ_dhonneur.ia.autojeu import ParamsAutoJeu, jouer_parties
 from champ_dhonneur.ia.encodage import (NONE_CELL, PERM, SPEC, encode_actions, encode_state)
 from champ_dhonneur.ia.evaluateurs import EvaluateurHeuristique, EvaluateurUniforme
 from champ_dhonneur.ia.evaluation import ClassementElo
-from champ_dhonneur.ia.recherche import ParamsRecherche, RechercheGumbel, executer
+from champ_dhonneur.ia.recherche import (Limite, ParamsRecherche, RechercheGumbel, choisir, classement,
+                                          coups_gagnants, executer)
 
 
 def partie_avancee(seed=3, n=40):
@@ -90,6 +91,100 @@ def test_recherche_trouve_la_victoire():
                 return
             g.apply(rng.choice(legal))
     pytest.skip("aucune position de victoire immédiate rencontrée")
+
+
+def position_gagnante():
+    """Position où un Contrôle gagne immédiatement (dernier marqueur de l'équipe au trait)."""
+    for seed in range(60):
+        g = Game(seed=seed)
+        rng = random.Random(seed)
+        while not g.done:
+            legal = g.legal_actions()
+            if not g.pending and coups_gagnants(g, legal):
+                return g
+            g.apply(rng.choice(legal))
+    pytest.skip("aucune position de victoire immédiate rencontrée")
+
+
+def test_coup_gagnant_toujours_joue():
+    g = position_gagnante()
+    legal = g.legal_actions()
+    gagnants = coups_gagnants(g, legal)
+    for i in gagnants:
+        h = g.copy()
+        h.apply(legal[i])
+        assert h.done and h.winner == g.team(g.to_move)
+    # même avec une recherche minuscule, bruitée et limitée à deux candidats
+    for graine in range(5):
+        r = RechercheGumbel(ParamsRecherche(simulations=4, m=2, bruit=True, bruit_coup=False, coup_gagnant=True),
+                            seed=graine)
+        res = executer([r.generateur(g)], EvaluateurUniforme())[0]
+        assert legal.index(res.action) in gagnants
+
+
+def test_choix_et_classement_coherents():
+    """Le coup joué est le meilleur score parmi les plus explorés ; l'analyse le classe premier."""
+    visites = np.array([10, 100, 90, 3, 0.0])
+    score = np.array([9.0, 1.0, 2.0, 5.0, 8.0])
+    assert choisir(visites, score) == 2
+    assert classement(visites, score) == [2, 1, 0, 3, 4]
+    assert choisir(np.zeros(3), np.array([0.0, 2.0, 1.0])) == 1      # sans visite : l'a priori
+
+
+def test_recherche_progressive_profondeur():
+    g = partie_avancee(seed=5, n=10)
+    rapports = []
+    r = RechercheGumbel(ParamsRecherche(parallele=4, bruit=False), seed=0)
+    res = executer([r.approfondir(g, Limite(profondeur=4), suivi=rapports.append)], EvaluateurHeuristique())[0]
+    assert res.infos["profondeur"] == 4 and not res.infos["en_cours"]
+    assert res.simulations == 32 * (2 ** 4 - 1)          # chaque profondeur double le budget
+    assert [x.infos["profondeur"] for x in rapports if x.infos["en_cours"]] == [1, 2, 3]
+    assert rapports[-1] is res
+    assert res.infos["ordre"][0] == res.legal.index(res.action)
+    assert 1 <= res.infos["horizon"] <= res.infos["horizon_max"]
+    assert res.action in g.legal_actions() and abs(res.politique.sum() - 1) < 1e-4
+
+
+def test_recherche_progressive_limites_et_arret():
+    import threading
+    g = partie_avancee(seed=5, n=10)
+    ev = EvaluateurUniforme()
+    nouvelle = lambda **kw: RechercheGumbel(ParamsRecherche(parallele=4, bruit=False, **kw), seed=0)  # noqa: E731
+    res = executer([nouvelle().approfondir(g, Limite(simulations=100))], ev)[0]
+    assert 100 <= res.simulations < 104
+    res = executer([nouvelle().approfondir(g, Limite(secondes=0.3))], ev)[0]
+    assert 0.3 <= res.infos["secondes"] < 3
+    # analyse infinie : arrêtée de l'extérieur (ici dès la profondeur 2 atteinte)
+    arret = threading.Event()
+    suivi = lambda r: arret.set() if r.infos["profondeur"] >= 2 else None  # noqa: E731
+    res = executer([nouvelle().approfondir(g, Limite(arret=arret), suivi=suivi)], ev)[0]
+    assert res.infos["profondeur"] == 2
+    # longue recherche : l'arbre est élagué et la recherche continue
+    r = nouvelle(max_noeuds=300)
+    res = executer([r.approfondir(g, Limite(profondeur=5))], ev)[0]
+    assert res.infos["elagages"] >= 1 and res.simulations == 32 * (2 ** 5 - 1)
+    assert res.action in g.legal_actions()
+
+
+def test_bot_au_temps_et_victoire_forcee():
+    from champ_dhonneur.bots.neural import NeuralBot
+    g = partie_avancee(seed=5, n=10)
+    bot = NeuralBot(heuristique=True, temps=0.3, seed=0)
+    assert bot.choose(g) in g.legal_actions()
+    assert bot.derniere.infos["profondeur"] >= 1 and bot.derniere.infos["secondes"] >= 0.3
+    g = position_gagnante()
+    bot = NeuralBot(heuristique=True, simulations=8, seed=0)
+    a = bot.choose(g)
+    h = g.copy()
+    h.apply(a)
+    assert h.done and h.winner == g.team(g.to_move) and bot.mat is not None
+
+
+def test_autojeu_meilleur_coup():
+    data, st = jouer_parties(EvaluateurHeuristique(), ParamsAutoJeu(
+        parties=2, simultanees=2, simulations=8, simulations_rapides=4, p_complete=0.5, max_manches=12,
+        meilleur_coup=True), seed=1)
+    assert st["parties"] == 2 and len(data["z"]) > 0
 
 
 def test_autojeu_heuristique():

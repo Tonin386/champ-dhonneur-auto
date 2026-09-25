@@ -5,7 +5,12 @@ requêtes de toutes leurs recherches sont regroupées en un lot unique pour le
 réseau (GPU ou CPU).
 
 Techniques utilisées :
-  * recherche Gumbel IS-MCTS avec bruit de Gumbel (exploration) ;
+  * recherche Gumbel IS-MCTS avec bruit de Gumbel (exploration) ; avec `meilleur_coup`, le coup
+    joué est toujours le meilleur coup de la recherche : le bruit ne sert plus qu'à choisir les
+    candidats des recherches complètes (diversité des cibles de politique), les recherches
+    rapides n'en ont pas (comme KataGo), un coup gagnant est toujours joué, et la valeur de
+    recherche mêlée à la cible de valeur est celle du coup joué (la moyenne de la racine compte
+    aussi les coups écartés : elle sous-estime la position du joueur au trait) ;
   * *playout cap randomization* (KataGo) : une fraction des coups reçoit une
     recherche complète et produit une cible de politique ; les autres coups,
     joués avec une recherche rapide, ne servent qu'à la cible de valeur, ce
@@ -52,13 +57,20 @@ class ParamsAutoJeu:
     direct: str = ""           # fichier de diffusion d'une partie en cours (ia/direct.py), "" = aucune
     p_draft: float = 0.0       # part des parties commencées par la mise en place avancée
     simulations_draft: int = 128   # simulations des choix de cartes (recherches complètes)
+    meilleur_coup: bool = False    # coup joué = meilleur coup de la recherche (voir l'en-tête)
 
 
 def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tuple[dict, dict]:
     rng = random.Random(seed)
-    rech = RechercheGumbel(ParamsRecherche(simulations=P.simulations, m=P.m, bruit=True,
-                                           parallele=P.parallele, c_visit=P.c_visit,
-                                           c_scale=P.c_scale), seed=rng.randrange(2**31))
+
+    def recherche(bruit: bool) -> RechercheGumbel:
+        return RechercheGumbel(ParamsRecherche(simulations=P.simulations, m=P.m, bruit=bruit,
+                                               parallele=P.parallele, c_visit=P.c_visit, c_scale=P.c_scale,
+                                               bruit_coup=not P.meilleur_coup, coup_gagnant=P.meilleur_coup),
+                               seed=rng.randrange(2**31))
+
+    rech = recherche(True)
+    rech_rapide = recherche(False) if P.meilleur_coup else rech
     exemples: list[dict] = []
     releves: list[str] = []
     stats = {"parties": 0, "victoires_blanc": 0, "victoires_noir": 0, "nulles": 0,
@@ -125,7 +137,7 @@ def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tupl
                 slot["complet"] = g.in_draft or rng.random() < P.p_complete
                 sims = (P.simulations_draft if g.in_draft
                         else P.simulations if slot["complet"] else P.simulations_rapides)
-                slot["gen"] = rech.generateur(g, sims)
+                slot["gen"] = (rech if slot["complet"] else rech_rapide).generateur(g, sims)
                 slot["req"] = next(slot["gen"])
                 break
         if diffuseur is not None:
@@ -147,7 +159,8 @@ def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tupl
                     ex = encode_state(g)
                     ex["acts"] = encode_actions(g, res.legal)
                     ex["pi"] = res.politique
-                    ex["q"] = res.valeur
+                    # valeur de recherche : celle du coup joué (meilleur_coup), sinon la moyenne de la racine
+                    ex["q"] = float(res.q[res.legal.index(res.action)]) if P.meilleur_coup else res.valeur
                     ex["equipe"] = g.team(g.to_move)
                     ex["main_adv"] = main_adverse(g)
                     slot["ex"].append(ex)

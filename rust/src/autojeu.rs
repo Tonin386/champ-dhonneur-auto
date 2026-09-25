@@ -26,6 +26,11 @@ pub struct ParamsAutoJeu {
     pub p_draft: f64,
     /// simulations aux décisions de draft (toujours des recherches complètes)
     pub simulations_draft: usize,
+    /// coup joué = meilleur coup de la recherche (sans bruit), coup gagnant toujours joué ; le bruit
+    /// de Gumbel ne sert plus qu'à choisir les candidats des recherches complètes (cibles de
+    /// politique), les recherches rapides n'en ont pas ; la valeur de recherche des exemples est
+    /// celle du coup joué
+    pub meilleur_coup: bool,
 }
 
 struct Exemple {
@@ -160,14 +165,17 @@ impl AutoJeu {
         }
     }
 
-    fn params_recherche(&self, simulations: usize) -> ParamsRecherche {
+    fn params_recherche(&self, simulations: usize, complet: bool) -> ParamsRecherche {
+        let meilleur = self.p.meilleur_coup;
         ParamsRecherche {
             simulations,
             m: self.p.m,
             c_visit: self.p.c_visit,
             c_scale: self.p.c_scale,
-            bruit: true,
+            bruit: complet || !meilleur,
             parallele: self.p.parallele,
+            bruit_coup: !meilleur,
+            coup_gagnant: meilleur,
             ..ParamsRecherche::default()
         }
     }
@@ -254,7 +262,7 @@ impl AutoJeu {
             } else {
                 self.p.simulations_rapides
             };
-            let params = self.params_recherche(sims);
+            let params = self.params_recherche(sims, complet);
             let graine = self.rng.next_u64();
             let e = &mut self.emplacements[i];
             let (r, reqs) = Recherche::nouvelle(&e.jeu, sims, params, graine);
@@ -271,6 +279,12 @@ impl AutoJeu {
         let e = &mut self.emplacements[i];
         let res = e.recherche.take().unwrap().resultat.unwrap();
         if e.complet {
+            // valeur de recherche : celle du coup joué (meilleur_coup), sinon la moyenne de la racine
+            let q = if self.p.meilleur_coup {
+                res.q[res.legal.iter().position(|a| *a == res.action).unwrap()]
+            } else {
+                res.valeur
+            };
             let mut acts = Vec::with_capacity(res.legal.len() * ACT_F);
             encoder_actions(&e.jeu, &res.legal, &mut acts);
             let adv = &e.jeu.e.joueurs[1 - e.jeu.au_trait() as usize];
@@ -283,7 +297,7 @@ impl AutoJeu {
                 obs: encoder_etat(&e.jeu),
                 acts,
                 pi: res.politique.clone(),
-                q: res.valeur as f32,
+                q: q as f32,
                 equipe: e.jeu.equipe(e.jeu.au_trait()),
             });
         }

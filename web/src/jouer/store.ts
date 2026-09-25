@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Decor, Image } from "../types";
-import type { Analyse, Conseil, EtatServeur, InfoIA, JoueurCfg, Legal, Mise, Position, Regles, Tirage } from "./types";
+import type { Analyse, Conseil, EtatServeur, InfoIA, JoueurCfg, Legal, LimiteAnalyse, Mise, Position, Regles, Tirage } from "./types";
 
 export interface Config {
   joueurs: JoueurCfg[];
@@ -111,7 +111,8 @@ interface EtatJeu {
 
   // analyse
   analyse: boolean;
-  simulations: number;
+  /** limite de l'analyse progressive (durée, profondeur, simulations, infinie) */
+  limite: LimiteAnalyse;
   fleche: boolean;
   analyses: Record<number, Analyse>;
   enAnalyse: number | null;
@@ -134,9 +135,11 @@ interface EtatJeu {
   choisirPiece(c: string | null): void;
   choisirCase(i: number | null): void;
   setSurvol(c: number[] | null): void;
-  analyser(pos: number): Promise<void>;
+  analyser(pos: number): void;
+  /** arrête l'analyse en cours ; `marquer` : elle n'est pas relancée d'elle-même (bouton « Arrêter ») */
+  arreterAnalyse(marquer?: boolean): void;
   basculerAnalyse(): void;
-  setSimulations(n: number): void;
+  setLimite(l: LimiteAnalyse): void;
   ouvrirEditeur(): Promise<void>;
   setEditeur(p: Position | null): void;
   setErreur(e: string | null): void;
@@ -174,9 +177,26 @@ function ecrire(cle: string, v: unknown) {
   }
 }
 
+export const LIMITE_DEFAUT: LimiteAnalyse = { type: "duree", valeur: 3 };
+
 const prefs = lire("champ.jouer", {
-  analyse: false, simulations: 400, fleche: true, vitesse: 700, pilotage: "auto" as Pilotage, retourne: false,
+  analyse: false, limite: LIMITE_DEFAUT, fleche: true, vitesse: 700, pilotage: "auto" as Pilotage, retourne: false,
 });
+
+if (!["duree", "profondeur", "simulations", "infini"].includes(prefs.limite?.type) || !(prefs.limite.valeur >= 0)) {
+  prefs.limite = LIMITE_DEFAUT;
+}
+
+/** Paramètres de /analyse/flux pour une limite (aucun : analyse infinie). */
+function paramsLimite(l: LimiteAnalyse): Record<string, string> {
+  if (l.type === "duree") return { secondes: String(l.valeur) };
+  if (l.type === "profondeur") return { profondeur: String(l.valeur) };
+  if (l.type === "simulations") return { simulations: String(l.valeur) };
+  return {};
+}
+
+/** Analyse progressive en cours (Server-Sent Events) : une seule à la fois. */
+let flux: EventSource | null = null;
 
 /** Partie affichée : reprise au rechargement de la page. */
 const PARTIE = "champ.jouer.partie";
@@ -268,7 +288,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     parties: null,
     ecriture: true,
     analyse: prefs.analyse,
-    simulations: prefs.simulations,
+    limite: prefs.limite,
     fleche: prefs.fleche,
     analyses: {},
     enAnalyse: null,
@@ -406,19 +426,37 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     choisirCase: i => set({ caseChoisie: get().caseChoisie === i ? null : i }),
     setSurvol: survol => set({ survol }),
 
-    analyser: async pos => {
-      const { id, simulations, analyses } = get();
-      if (!id || analyses[pos]) return;
+    analyser: pos => {
+      const { id, limite } = get();
+      if (!id) return;
+      flux?.close();
+      const es = new EventSource(`/api/jeu/${id}/analyse/flux?${new URLSearchParams({ pos: String(pos), ...paramsLimite(limite) })}`);
+      flux = es;
       set({ enAnalyse: pos });
-      try {
-        const a = await api<Analyse>(`/api/jeu/${id}/analyse?pos=${pos}&simulations=${simulations}`, {});
-        // une réponse arrivée après un changement de partie est ignorée
-        if (get().id === id) set({ analyses: { ...get().analyses, [pos]: a } });
-      } catch (e) {
-        erreur(e);
-      } finally {
+      const fin = () => {
+        es.close();
+        if (flux !== es) return;
+        flux = null;
         if (get().enAnalyse === pos) set({ enAnalyse: null });
-      }
+      };
+      es.addEventListener("analyse", ev => {
+        // une analyse arrivée après un changement de partie est ignorée
+        if (get().id !== id || flux !== es) return fin();
+        const a = JSON.parse((ev as MessageEvent).data) as Analyse;
+        set({ analyses: { ...get().analyses, [pos]: a } });
+      });
+      es.addEventListener("erreur", ev => set({ erreur: JSON.parse((ev as MessageEvent).data).detail }));
+      es.addEventListener("fin", fin);
+      es.onerror = fin;   // connexion perdue : pas de reconnexion automatique
+    },
+
+    arreterAnalyse: (marquer = false) => {
+      const pos = get().enAnalyse;
+      flux?.close();
+      flux = null;
+      if (pos === null) return;
+      const a = get().analyses[pos];
+      set({ enAnalyse: null, ...(marquer && a ? { analyses: { ...get().analyses, [pos]: { ...a, arretee: true } } } : {}) });
     },
 
     basculerAnalyse: () => {
@@ -426,8 +464,9 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       set({ analyse, onglet: analyse ? "analyse" : "coups" });
       sauverPrefs();
     },
-    setSimulations: simulations => {
-      set({ simulations, analyses: {} });
+    setLimite: limite => {
+      get().arreterAnalyse();
+      set({ limite, analyses: {} });
       sauverPrefs();
     },
 
@@ -483,7 +522,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
 
 export const sauverPrefs = () => {
   const s = useJeu.getState();
-  ecrire("champ.jouer", { analyse: s.analyse, simulations: s.simulations, fleche: s.fleche, vitesse: s.vitesse, pilotage: s.pilotage, retourne: s.retourne });
+  ecrire("champ.jouer", { analyse: s.analyse, limite: s.limite, fleche: s.fleche, vitesse: s.vitesse, pilotage: s.pilotage, retourne: s.retourne });
 };
 
 /** Image affichée ; en hybride, pendant la pioche de l'IA : la position après son coup (aperçu). */

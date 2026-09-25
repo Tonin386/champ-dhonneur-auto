@@ -9,76 +9,105 @@ from ..notation import action_str, describe
 
 
 def bot_analyse(simulations: int = 400, modele: str | None = None, dispositif: str | None = None):
-    """Bot IA dont la recherche garde son arbre : ligne principale de chaque coup candidat."""
-    from ..bots.neural import NeuralBot
-    from .recherche import RechercheGumbel
-
-    class RechercheAnalyse(RechercheGumbel):
-        racine = None
-
-        def _vague(self, game, me, racine, taches):
-            self.racine = racine
-            yield from super()._vague(game, me, racine, taches)
-
-    bot = NeuralBot(modele=modele, simulations=simulations, dispositif=dispositif, seed=0)
-    bot.recherche = RechercheAnalyse(bot.recherche.p, seed=0)
-    from ..bots.neural import modele_par_defaut
+    """Bot IA dont la recherche garde son arbre (`recherche.racine`) : ligne principale des coups."""
+    from ..bots.neural import NeuralBot, modele_par_defaut
     from ..score import K
     from .valeurs import lire_k
+    bot = NeuralBot(modele=modele, simulations=simulations, dispositif=dispositif, seed=0)
     bot.k = lire_k(modele or modele_par_defaut(), K)      # échelle recalibrée par l'entraînement
     return bot
 
 
 def analyser(game: Game, bot, top: int = 5, observateur: int | None = None,
-             solveur: bool = True, profondeur: int = 8) -> dict:
+             solveur: bool = True, profondeur: int = 8, limite=None, suivi=None,
+             joue=None) -> dict:
     """Recherche depuis le point de vue du joueur au trait et renvoie les meilleurs coups.
 
     La recherche n'utilise que l'information du joueur au trait (déterminisations). Le score
     est donné du point de vue d'Or (voir champ_dhonneur.score) ; `observateur` restreint la
     recherche de victoire forcée à l'information de ce joueur (None : omnisciente).
+
+    Les coups sont classés comme l'IA choisit le sien (`recherche.classement`) : le premier est
+    celui qu'elle jouerait. `limite` (recherche.Limite) : recherche progressive, arrêtée par une
+    durée, une profondeur ou une demande extérieure ; `suivi(analyse)` reçoit alors les analyses
+    intermédiaires (`en_cours` vrai). Sans `limite` : `bot.simulations` simulations.
+    `joue` : coup effectivement joué dans la partie depuis cette position (relecture) ; son score
+    et son écart avec le meilleur coup sont ajoutés (`joue`).
     """
-    from ..score import Solveur, appreciation, bastions, depuis_valeur, texte_mat, texte_score
-    k = getattr(bot, "k", None)
+    from ..score import Solveur, bastions
     if game.done:
         return {"coups": [], "valeur": None, "fini": game.result_label(), "bastions": bastions(game)}
-    legal = game.legal_actions()
-    sign = 1.0 if game.team(game.to_move) == 0 else -1.0
     mat = Solveur(observateur).chercher(game) if solveur else None
-    rech = getattr(bot, "recherche", None)
-    if rech is not None and hasattr(bot, "ev"):
-        from .recherche import executer
+    rech = bot.recherche
+    from .recherche import executer
+    if limite is None:
         res = executer([rech.generateur(game, bot.simulations)], bot.ev)[0]
-    else:
-        bot.choose(game)
-        res = bot.derniere
-    racine = getattr(rech, "racine", None) if res.simulations else None
-    ordre = sorted(range(len(res.legal)), key=lambda i: -res.politique[i])[:top]
-    coups = []
-    for i in ordre:
-        a = res.legal[i]
+        return _formater(game, bot, res, mat, top, observateur, profondeur, joue)
+    rappel = None
+    if suivi is not None:
+        def rappel(r):
+            suivi(_formater(game, bot, r, mat, top, observateur, profondeur, joue))
+    res = executer([rech.approfondir(game, limite, suivi=rappel)], bot.ev)[0]
+    return _formater(game, bot, res, mat, top, observateur, profondeur, joue)
+
+
+def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int | None,
+              profondeur: int, joue) -> dict:
+    from ..score import appreciation, bastions, depuis_valeur, texte_mat, texte_score
+    from .recherche import classement
+    k = getattr(bot, "k", None)
+    legal = res.legal
+    sign = 1.0 if game.team(game.to_move) == 0 else -1.0
+    racine = getattr(bot.recherche, "racine", None) if res.simulations else None
+    ordre = res.infos.get("ordre") or classement(res.visites, res.politique)
+    best = legal.index(res.action)
+    ordre = [best] + [i for i in ordre if i != best]
+    total = max(float(res.visites.sum()), 1.0)
+
+    def coup(i: int) -> dict:
+        a = legal[i]
         v_or = sign * float(res.q[i])
-        c = {"coup": action_str(game, a), "description": describe(game, a),
-             "probabilite": round(float(res.politique[i]), 3), "q": round(float(res.q[i]), 3),
-             "visites": int(res.visites[i]), "score": round(depuis_valeur(v_or, k), 1),
-             "texte": texte_score(depuis_valeur(v_or, k)), "action": a,
-             "ligne": _ligne(game, a, racine, observateur, profondeur)}
-        coups.append(c)
+        sc = depuis_valeur(v_or, k)
+        return {"coup": action_str(game, a), "description": describe(game, a),
+                "probabilite": round(float(res.politique[i]), 3), "q": round(float(res.q[i]), 3),
+                "visites": int(res.visites[i]), "part": round(float(res.visites[i]) / total, 3),
+                "score": round(sc, 1), "texte": texte_score(sc) if res.visites[i] > 0 else "—", "action": a,
+                "ligne": _ligne(game, a, racine, observateur, profondeur)}
+
+    coups = [coup(i) for i in ordre[:top]]
     if mat and mat["action"] is not None:
         # le coup gagnant en tête, avec sa distance
-        c0 = next((c for c in coups if c["action"] == mat["action"]), None)
+        a = mat["action"]
+        c0 = next((c for c in coups if c["action"] == a), None)
         if c0 is None:
-            a = mat["action"]
-            c0 = {"coup": action_str(game, a), "description": describe(game, a), "probabilite": 0.0,
-                  "q": None, "visites": 0, "action": a, "ligne": _ligne(game, a, racine, observateur, profondeur)}
+            c0 = coup(legal.index(a)) if a in legal else {
+                "coup": action_str(game, a), "description": describe(game, a), "probabilite": 0.0, "q": None,
+                "visites": 0, "part": 0.0, "action": a, "ligne": _ligne(game, a, racine, observateur, profondeur)}
         coups = [c0] + [c for c in coups if c is not c0][:top - 1]
         c0["score"] = 99.9 if mat["equipe"] == 0 else -99.9
         c0["texte"] = texte_mat(mat["equipe"], mat["coups"])
-    v_or = sign * float(res.valeur)
+    # score de la position : celui du coup choisi (comme un moteur d'échecs) ; la moyenne de toutes
+    # les simulations de la racine compterait aussi les coups médiocres explorés puis écartés
+    v_pos = float(res.q[best]) if res.visites[best] > 0 else float(res.valeur)
+    v_or = sign * v_pos
     score = depuis_valeur(v_or, k)
-    out = {"coups": coups, "valeur": round(float(res.valeur), 3), "v_reseau": round(float(res.v_reseau), 3),
+    infos = res.infos
+    out = {"coups": coups, "valeur": round(v_pos, 3), "v_reseau": round(float(res.v_reseau), 3),
            "simulations": res.simulations, "force": len(legal) == 1, "v_or": round(v_or, 3),
            "score": round(score, 1), "texte": texte_score(score), "appreciation": appreciation(score),
-           "bastions": bastions(game), "mat": None, "k": k}
+           "bastions": bastions(game), "mat": None, "k": k,
+           "profondeur": infos.get("profondeur"), "horizon": round(float(infos.get("horizon", 0.0)), 1),
+           "horizon_max": infos.get("horizon_max"), "secondes": round(float(infos.get("secondes", 0.0)), 2),
+           "en_cours": bool(infos.get("en_cours", False))}
+    if joue is not None and joue in legal:
+        i = legal.index(joue)
+        c = next((c for c in coups if c["action"] == joue), None) or coup(i)
+        meilleur = coups[0]
+        ecart = abs(meilleur["score"] - c["score"]) if c is not meilleur else 0.0
+        out["joue"] = {"coup": c["coup"], "score": c["score"], "texte": c["texte"], "visites": c["visites"],
+                       "rang": ordre.index(i) + 1, "meilleur": c["action"] == meilleur["action"],
+                       "ecart": round(ecart, 1),
+                       "mat_manque": bool(mat and mat["action"] is not None and joue != mat["action"])}
     if mat:
         out["mat"] = {"equipe": mat["equipe"], "coups": mat["coups"],
                       "coup": action_str(game, mat["action"]) if mat["action"] is not None else None}
@@ -127,11 +156,14 @@ def texte(analyse: dict) -> str:
     lignes = []
     if analyse.get("valeur") is not None:
         symbole, libelle = analyse["appreciation"]
+        prof = (f"profondeur {analyse['profondeur']}, horizon {analyse['horizon']:.1f} coups "
+                f"(max {analyse['horizon_max']}), {analyse['secondes']:.1f} s, "
+                if analyse.get("profondeur") else "")
         lignes.append(f"Évaluation : {analyse['texte']}  {symbole} {libelle}  "
                       f"(bastions Or {analyse['bastions'][0]} – Argent {analyse['bastions'][1]}, "
-                      f"{analyse['simulations']} simulations ; 10 = un bastion d'avance)")
+                      f"{prof}{analyse['simulations']} simulations ; 10 = un bastion d'avance)")
     for i, c in enumerate(analyse["coups"], 1):
-        lignes.append(f"  {i}. {c['coup']:<16} {c['texte']:>6}  {100 * c['probabilite']:5.1f} %  "
+        lignes.append(f"  {i}. {c['coup']:<16} {c['texte']:>6}  {c['visites']:>7} sim.  "
                       f"{' '.join(c['ligne'][1:])}")
     return "\n".join(lignes)
 

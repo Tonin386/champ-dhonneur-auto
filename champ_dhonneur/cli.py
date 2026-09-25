@@ -231,7 +231,24 @@ def cmd_analyse(args) -> None:
     print(f"\nAprès {n} décisions — au trait : {side_label(g, g.to_move)}")
     if g.pending_label():
         print(f"» {g.pending_label()}")
-    print(texte(analyser(g, bot, args.top)))
+    limite = None
+    if args.duree or args.profondeur or args.infini:
+        import threading
+
+        from .ia.recherche import Limite
+        limite = Limite(secondes=args.duree, profondeur=args.profondeur, arret=threading.Event())
+    vues = set()
+
+    def suivi(a: dict) -> None:
+        # une analyse par profondeur atteinte (les analyses intermédiaires ne sont pas affichées)
+        if a["en_cours"] and a["profondeur"] not in vues:
+            vues.add(a["profondeur"])
+            print(texte(a) + "\n", flush=True)
+
+    try:
+        print(texte(analyser(g, bot, args.top, limite=limite, suivi=suivi if limite else None)))
+    except KeyboardInterrupt:
+        pass
 
 
 def cmd_calibrer(args) -> None:
@@ -316,6 +333,9 @@ def main(argv=None) -> None:
     an.add_argument("--coup", type=int, help="nombre de décisions à rejouer (défaut : toutes)")
     an.add_argument("--modele")
     an.add_argument("--simulations", type=int, default=400)
+    an.add_argument("--duree", type=float, help="secondes de recherche (recherche progressive)")
+    an.add_argument("--profondeur", type=int, help="profondeur à atteindre (recherche progressive)")
+    an.add_argument("--infini", action="store_true", help="analyse sans fin, affichée à chaque profondeur (Ctrl-C)")
     an.add_argument("--dispositif", default="cpu")
     an.add_argument("--top", type=int, default=5)
     an.set_defaults(fn=cmd_analyse)
