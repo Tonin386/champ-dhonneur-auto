@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EQUIPE } from "../jeu";
 import { auTraitIA, sauverPrefs, useAnalyseActive, useJeu, useTourIA } from "./store";
-import type { LimiteAnalyse, Analyse as TAnalyse } from "./types";
+import type { CoupAnalyse, LimiteAnalyse, Analyse as TAnalyse } from "./types";
 
 /** Texte principal, détail et couleur d'une évaluation (point de vue d'Or : + Or, − Argent). */
 export function libelleScore(a: TAnalyse): { texte: string; detail: string; cls: string } {
@@ -68,21 +68,93 @@ function avancement(a: TAnalyse, l: LimiteAnalyse): number | null {
   return null;
 }
 
+/** Chances de gain (une nulle compte pour moitié), Or d'un côté, Argent de l'autre, dans l'ordre
+ *  des colonnes des joueurs (plateau retourné : Argent à gauche). */
+export function Chances({ gainOr, compact }: { gainOr: number; compact?: boolean }) {
+  const retourne = useJeu(s => s.retourne);
+  const or = Math.round(100 * gainOr);
+  return (
+    <div className={`chances${compact ? " compact" : ""}${retourne ? " retournee" : ""}`} role="meter"
+      aria-label="Chances de gain d'Or" aria-valuemin={0} aria-valuemax={100} aria-valuenow={or}
+      title="Chances de gain estimées par le réseau (une partie nulle compte pour moitié)">
+      {!compact && (
+        <div className="libelles">
+          <span className="or">Or <b>{or} %</b></span>
+          <span className="quoi">chances de gain</span>
+          <span className="argent"><b>{100 - or} %</b> Argent</span>
+        </div>
+      )}
+      <div className="jauge-chances"><div className="part-or-h" style={{ width: `${100 * gainOr}%` }} /></div>
+    </div>
+  );
+}
+
 /** L'IA a le trait : c'est vous qui décidez quand elle joue. Elle joue le premier coup de sa
- *  réflexion, telle qu'elle en est (sans réflexion encore : une courte recherche). */
-export function JouerMaintenant() {
+ *  réflexion, telle qu'elle en est (sans réflexion encore : une courte recherche). `large` : avec
+ *  la description du coup. */
+export function JouerMaintenant({ large }: { large?: boolean }) {
   const tour = useTourIA();
   const fini = useJeu(s => s.fini);
   const occupe = useJeu(s => s.occupe);
   const hybride = useJeu(s => s.hybride !== null);
-  const coup = useJeu(s => s.analyses[s.images.length - 1]?.coups?.[0]?.coup);
+  const c = useJeu(s => s.analyses[s.images.length - 1]?.coups?.[0]);
   if (!tour || fini) return null;
   return (
-    <button type="button" className="on jouer-maintenant" disabled={occupe} onClick={() => void useJeu.getState().coupIA()}
-      title="L'IA joue le premier coup de sa réflexion, telle qu'elle en est (Espace)">
-      {occupe ? "L'IA joue…" : hybride ? "Jouer son meilleur coup" : "L'IA joue maintenant"}
-      {coup && !occupe && <code>{coup}</code>}
+    <button type="button" className={`on jouer-maintenant${large ? " large" : ""}`} disabled={occupe}
+      onClick={() => void useJeu.getState().coupIA()}
+      title={`L'IA joue le premier coup de sa réflexion, telle qu'elle en est (Espace)${c ? ` : ${c.description}` : ""}`}>
+      <span className="quoi">{occupe ? "L'IA joue…" : hybride ? "Jouer son meilleur coup" : "L'IA joue maintenant"}</span>
+      {c && !occupe && <code>{c.coup}</code>}
+      {large && c && !occupe && <span className="desc">{c.description}</span>}
+      {!occupe && <kbd>Espace</kbd>}
     </button>
+  );
+}
+
+const signe = (x: number, d = 1) => (x > 0 ? "+" : x < 0 ? "−" : "±") + nombre(Math.abs(x), d);
+const clsScore = (x: number) => (x > 0.05 ? "or" : x < -0.05 ? "argent" : "");
+
+/** Une ligne de l'analyse : rang, score, écart au meilleur (pour le joueur au trait), coup,
+ *  part de la réflexion, suite attendue ; survolée, elle est montrée sur le plateau. */
+function LigneCoup({ c, rang, meilleur, pour, jouable, reflexion }: {
+  c: CoupAnalyse; rang: number; meilleur: CoupAnalyse; pour: number; jouable: boolean; reflexion: boolean;
+}) {
+  const s = useJeu.getState();
+  const mat = Math.abs(c.score) >= 99 || Math.abs(meilleur.score) >= 99;
+  const ecart = (c.score - meilleur.score) * (pour === 0 ? 1 : -1);   // ≤ 0 : moins bon pour le joueur au trait
+  const part = c.part ?? c.probabilite;
+  const gain = c.gain_or === undefined ? null : Math.round(100 * (pour === 0 ? c.gain_or : 1 - c.gain_or));
+  const survoler = (oui: boolean) => s.set(oui ? { survol: c.cases.length ? c.cases : null, survolLigne: rang - 1 }
+    : { survol: null, survolLigne: null });
+  return (
+    <li className={`ligne-coup${rang === 1 ? " premier" : ""}`}>
+      {/* aria-disabled plutôt que disabled : un bouton désactivé ne reçoit pas le survol (ligne sur le plateau) */}
+      <button type="button" aria-disabled={!jouable} onClick={() => { if (jouable) s.jouer(c.i); }}
+        title={jouable ? (reflexion ? "Jouer ce coup pour l'IA" : "Jouer ce coup") : "Survolez : la ligne est montrée sur le plateau"}
+        onMouseEnter={() => survoler(true)} onMouseLeave={() => survoler(false)}
+        onFocus={() => survoler(true)} onBlur={() => survoler(false)}>
+        <span className="rang">{rang}</span>
+        <span className={`s ${clsScore(c.score)}`}>{c.texte}</span>
+        <span className="ecart">
+          {rang === 1 ? (reflexion ? "coup de l'IA" : "meilleur") : mat || c.visites === 0 ? "" : signe(ecart)}
+        </span>
+        <span className="c"><code>{c.coup}</code><span className="d" title={c.description}>{c.description}</span></span>
+        <span className="p" title={`${nombre(c.visites)} simulations : plus un coup est exploré, plus son score est sûr`}>
+          <span className="jauge-part"><span style={{ width: `${Math.max(3, 100 * part)}%` }} /></span>
+          {Math.round(100 * part)} %
+        </span>
+        <span className="pv">
+          {c.ligne.slice(1).map((m, j) => (
+            <span key={j} className={`m e${c.equipes?.[j + 1] ?? ""}`} title={c.ligne_desc?.[j + 1]}>
+              <i>{j + 2}</i>{m}
+            </span>
+          ))}
+        </span>
+        {gain !== null && (
+          <span className="g" title="Chances de gain du joueur au trait après ce coup">{gain} % gain</span>
+        )}
+      </button>
+    </li>
   );
 }
 
@@ -98,7 +170,7 @@ export function Analyse() {
   const iaJoue = useJeu(s => s.occupe && auTraitIA(s));
   const tourIA = useTourIA();
   const hybride = useJeu(s => s.hybride !== null);
-  const trait = useJeu(s => s.trait);
+  const equipes = useJeu(s => s.decor?.equipes);
   const s = useJeu.getState();
 
   if (!analyse) {
@@ -118,20 +190,20 @@ export function Analyse() {
   const reseau = a?.source === "reseau";
   const av = a && reseau ? avancement(a, limite) : null;
   const vitesse = a?.secondes ? (a.simulations ?? 0) / a.secondes : 0;
+  const trait = a?.trait ?? 0;
+  const pour = equipes ? equipes[trait] : trait;   // équipe au trait : sens des écarts
   // réflexion de l'IA : la position actuelle, l'IA au trait (hybride : on choisit aussi son coup)
   const reflexion = tourIA && vivant && !a?.fini;
   return (
-    <div className="analyse">
+    <div className={`analyse${reflexion ? " reflexion" : ""}`}>
       {reflexion && (
         <div className="tete-reflexion">
-          <div>
-            <b>Réflexion de l'IA ({EQUIPE[trait]})</b>
-            <span>
-              {hybride ? "Cliquez une ligne pour jouer ce coup pour l'IA, puis reproduisez-le sur la table."
-                : "Elle jouera le premier coup de la liste quand vous le déciderez."}
-            </span>
+          <div className="titre-reflexion">
+            <span className={`pouls${enCours ? " actif" : ""}`} aria-hidden="true" />
+            <b>Réflexion de l'IA · {EQUIPE[pour]}</b>
+            <span>{hybride ? "cliquez une ligne pour la jouer" : "elle jouera la ligne 1 quand vous le déciderez"}</span>
           </div>
-          <JouerMaintenant />
+          <JouerMaintenant large />
         </div>
       )}
       <div className="tete-analyse">
@@ -140,8 +212,7 @@ export function Analyse() {
           <b>{txt?.detail || (iaJoue ? "L'IA joue…" : enCours ? "Calcul…" : "")}</b>
           {a && !a.fini && (
             <span>
-              Bastions Or {a.bastions[0]} · Argent {a.bastions[1]}
-              {reseau ? ` · vu par ${EQUIPE[a.observateur ?? a.trait]}` : ""}
+              {reseau ? `vu par ${EQUIPE[a.observateur ?? a.trait]} · ` : ""}bastions {a.bastions[0]} – {a.bastions[1]}
               {a.mains ? ` · main du joueur plateau inconnue : moyenne sur ${a.mains} mains possibles` : ""}
             </span>
           )}
@@ -149,50 +220,7 @@ export function Analyse() {
           {a?.mat?.coup && <span>Coup gagnant : <code>{a.mat.coup}</code></span>}
         </div>
       </div>
-      {reseau && a && (
-        <div className={`recherche${enCours ? " active" : ""}`}>
-          <div className="mesures">
-            {a.profondeur ? (
-              <span title="Passes d'approfondissement terminées : chaque profondeur double le nombre de simulations">
-                Profondeur <b>{a.profondeur}</b>
-              </span>
-            ) : null}
-            {a.horizon ? (
-              <span title="Coups anticipés par les simulations (pièces jouées), en moyenne et au plus loin">
-                horizon <b>{nombre(a.horizon, 1)}</b> coups (max {a.horizon_max})
-              </span>
-            ) : null}
-            <span><b>{nombre(a.simulations ?? 0)}</b> simulations</span>
-            {a.secondes ? <span>{nombre(a.secondes, 1)} s{vitesse ? ` · ${nombre(vitesse)}/s` : ""}</span> : null}
-            {enCours ? <span className="etat">calcul en cours…</span> : a.arretee ? <span className="etat">arrêtée</span> : null}
-          </div>
-          <div className="jauge" aria-hidden="true">
-            <div className={av === null ? "infinie" : ""} style={av === null ? undefined : { width: `${100 * av}%` }} />
-          </div>
-        </div>
-      )}
-      <div className="reglages-analyse">
-        <label>Limite
-          <select value={cle(limite)} onChange={e => {
-            const [type, v] = e.target.value.split(":");
-            s.setLimite({ type: type as LimiteAnalyse["type"], valeur: +v });
-          }}>
-            {LIMITES.map(g => (
-              <optgroup key={g.groupe} label={g.groupe}>
-                {g.options.map(([l, t]) => <option key={cle(l)} value={cle(l)}>{t}</option>)}
-              </optgroup>
-            ))}
-          </select>
-        </label>
-        {enCours ? (
-          <button type="button" onClick={() => s.arreterAnalyse(true)} title="Arrêter l'analyse : son résultat reste affiché">Arrêter</button>
-        ) : a && reseau ? (
-          <button type="button" onClick={() => s.analyser(pos)} title="Relancer l'analyse de cette position depuis le début">Relancer</button>
-        ) : null}
-        <label className="case-a-cocher">
-          <input type="checkbox" checked={fleche} onChange={e => { s.set({ fleche: e.target.checked }); sauverPrefs(); }} /> Flèche du meilleur coup
-        </label>
-      </div>
+      {a && !a.fini && a.gain_or !== undefined && <Chances gainOr={a.gain_or} />}
       {a?.joue && (
         <p className={`coup-joue${a.joue.meilleur ? " bon" : a.joue.ecart >= 5 || a.joue.mat_manque ? " faute" : ""}`}
           title="Coup joué ensuite dans la partie, évalué par cette analyse">
@@ -202,30 +230,65 @@ export function Analyse() {
               : `— ${a.joue.rang}ᵉ choix, ${nombre(a.joue.ecart, 1)} point${a.joue.ecart >= 2 ? "s" : ""} de moins que le meilleur`}
         </p>
       )}
+      {coups.length > 0 && (
+        <div className="titre-lignes">
+          <span>{reflexion ? "Lignes de l'IA" : "Meilleures lignes"}</span>
+          <span className="aide-lignes">survolez une ligne pour la voir sur le plateau</span>
+        </div>
+      )}
       <ol className="meilleurs">
         {coups.map((c, k) => (
-          <li key={k}>
-            <button type="button" disabled={!(humain && vivant)}
-              title={humain && vivant ? (reflexion ? "Jouer ce coup pour l'IA" : "Jouer ce coup") : c.description}
-              onClick={() => s.jouer(c.i)}
-              onMouseEnter={() => s.setSurvol(c.cases.length ? c.cases : null)} onMouseLeave={() => s.setSurvol(null)}>
-              <span className={`s ${c.score > 0.05 ? "or" : c.score < -0.05 ? "argent" : ""}`}>{c.texte}</span>
-              <code className="c">{c.coup}</code>
-              <span className="p" title={`${nombre(c.visites)} simulations : plus un coup est exploré, plus son score est sûr`}>
-                {c.part !== undefined ? `${Math.round(100 * c.part)} %` : `${Math.round(100 * c.probabilite)} %`}
-              </span>
-              <span className="d">{c.description}</span>
-              {c.ligne.length > 1 && (
-                <span className="l" title="Suite attendue ; couleur du camp qui joue chaque coup">
-                  {c.ligne.slice(1).map((m, j) => <span key={j} className={`m e${c.equipes?.[j + 1] ?? ""}`}>{m}</span>)}
-                </span>
-              )}
-            </button>
-          </li>
+          <LigneCoup key={k} c={c} rang={k + 1} meilleur={coups[0]} pour={pour} jouable={humain && vivant} reflexion={reflexion} />
         ))}
         {a && !coups.length && !a.fini && !a.indisponible && !a.mains && <li className="vide">Aucun coup à proposer.</li>}
       </ol>
-      <Legende />
+      <div className="pied-analyse">
+        {reseau && a && (
+          <div className={`recherche${enCours ? " active" : ""}`}>
+            <div className="mesures">
+              {a.profondeur ? (
+                <span title="Passes d'approfondissement terminées : chaque profondeur double le nombre de simulations">
+                  profondeur <b>{a.profondeur}</b>
+                </span>
+              ) : null}
+              {a.horizon ? (
+                <span title="Coups anticipés par les simulations (pièces jouées), en moyenne et au plus loin">
+                  horizon <b>{nombre(a.horizon, 1)}</b> (max {a.horizon_max})
+                </span>
+              ) : null}
+              <span><b>{nombre(a.simulations ?? 0)}</b> sim.</span>
+              {a.secondes ? <span>{nombre(a.secondes, 1)} s{vitesse ? ` · ${nombre(vitesse)}/s` : ""}</span> : null}
+              {enCours ? <span className="etat">en cours</span> : a.arretee ? <span className="etat">arrêtée</span> : null}
+            </div>
+            <div className="jauge" aria-hidden="true">
+              <div className={av === null ? "infinie" : ""} style={av === null ? undefined : { width: `${100 * av}%` }} />
+            </div>
+          </div>
+        )}
+        <div className="reglages-analyse">
+          <label>Limite
+            <select value={cle(limite)} onChange={e => {
+              const [type, v] = e.target.value.split(":");
+              s.setLimite({ type: type as LimiteAnalyse["type"], valeur: +v });
+            }}>
+              {LIMITES.map(g => (
+                <optgroup key={g.groupe} label={g.groupe}>
+                  {g.options.map(([l, t]) => <option key={cle(l)} value={cle(l)}>{t}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          {enCours ? (
+            <button type="button" onClick={() => s.arreterAnalyse(true)} title="Arrêter l'analyse : son résultat reste affiché">Arrêter</button>
+          ) : a && reseau ? (
+            <button type="button" onClick={() => s.analyser(pos)} title="Relancer l'analyse de cette position depuis le début">Relancer</button>
+          ) : null}
+          <label className="case-a-cocher" title="Flèche bleue du meilleur coup sur le plateau">
+            <input type="checkbox" checked={fleche} onChange={e => { s.set({ fleche: e.target.checked }); sauverPrefs(); }} /> Flèche
+          </label>
+        </div>
+        <Legende />
+      </div>
     </div>
   );
 }
@@ -239,9 +302,11 @@ function Legende() {
         <dt>−3,0</dt><dd>Argent mène (score négatif).</dd>
         <dt>#3 / #-2</dt><dd>Victoire forcée : Or (#3) ou Argent (#-2) pose son dernier marqueur en au plus 3 (2) coups, quoi que fasse l'adversaire et quels que soient les tirages du sac. Cherchée jusqu'à la fin de la manche.</dd>
         <dt>= ⩲ ± +−</dt><dd>Égalité, léger, net, décisif avantage d'Or (⩱ ∓ −+ pour Argent), comme aux échecs.</dd>
+        <dt>Chances</dt><dd>Chances de gain estimées par le réseau pour chaque camp (une partie nulle compte pour moitié) ; sous chaque coup, celles du joueur au trait après ce coup.</dd>
+        <dt>−2,7</dt><dd>Écart d'un coup avec le premier, pour le joueur au trait : ce qu'il perd en le préférant.</dd>
         <dt>Profondeur</dt><dd>L'analyse approfondit par passes successives, comme un moteur d'échecs : chaque profondeur double le nombre de simulations. L'horizon est le nombre de coups que les simulations anticipent (en moyenne, et au plus loin).</dd>
-        <dt>Ordre</dt><dd>Les coups sont classés comme l'IA choisit le sien : d'abord les plus explorés, puis le meilleur score. Le premier est le coup que l'IA jouerait : c'est lui qu'elle joue quand vous cliquez « L'IA joue maintenant » (Espace). Le pourcentage est la part des simulations consacrées au coup : un score peu exploré est moins sûr.</dd>
-        <dt>Ligne</dt><dd>Suite la plus explorée par la recherche après le coup proposé, en couleur du camp qui joue chaque coup (Or, Argent) ; un coup = une pièce jouée, avec ses effets enchaînés (&gt;).</dd>
+        <dt>Ordre</dt><dd>Les coups sont classés comme l'IA choisit le sien : d'abord les plus explorés, puis le meilleur score. Le premier est le coup que l'IA jouerait : c'est lui qu'elle joue quand vous cliquez « L'IA joue maintenant » (Espace). La jauge et le pourcentage sont la part des simulations consacrées au coup : un score peu exploré est moins sûr.</dd>
+        <dt>Ligne</dt><dd>Suite la plus explorée par la recherche après le coup proposé, numérotée, en couleur du camp qui joue chaque coup (Or, Argent) ; un coup = une pièce jouée, avec ses effets enchaînés (&gt;). Survolée, la ligne est dessinée sur le plateau avec les mêmes numéros.</dd>
       </dl>
     </details>
   );
@@ -270,6 +335,8 @@ export function CourbeEval() {
   const X = (x: number) => gx + ((w - 2 * gx) * x) / Math.max(1, n - 1);
   const Y = (v: number) => h / 2 - ((h / 2 - gy) * v) / 40;
   const ligne = pts.map(([x, v]) => `${X(x).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  const ici = analyses[pos];
+  const txt = ici && ici.score !== undefined ? libelleScore(ici) : null;
   const clic = (e: React.PointerEvent) => {
     const r = (e.currentTarget as SVGElement).getBoundingClientRect();
     useJeu.getState().aller(Math.round(((e.clientX - r.left - gx) / (w - 2 * gx)) * (n - 1)));
@@ -278,6 +345,7 @@ export function CourbeEval() {
     <figure className="graphe courbe-eval">
       <figcaption>
         <span className="titre">Évaluation au fil de la partie (+ Or, − Argent ; 10 = un bastion)</span>
+        {txt && <span className={`valeur-courbe ${txt.cls}`}>décision {pos} : <b>{txt.texte}</b></span>}
         <span className="quand">{pts.length} position{pts.length > 1 ? "s" : ""} analysée{pts.length > 1 ? "s" : ""}</span>
       </figcaption>
       <div className="zone" ref={ref}>
@@ -294,6 +362,10 @@ export function CourbeEval() {
               <polyline className="courbe" points={ligne} />
             </>
           )}
+          {pts.map(([x, v]) => (
+            <circle key={x} className={`point-eval ${v > 0.05 ? "or" : v < -0.05 ? "argent" : ""}${x === pos ? " ici" : ""}`}
+              cx={X(x)} cy={Y(v)} r={x === pos ? 4 : 2.4} />
+          ))}
           <line className="curseur-pos" x1={X(pos)} x2={X(pos)} y1={gy} y2={h - gy} />
           <text className="borne" x={gx} y={gy + 8}>Or</text>
           <text className="borne" x={gx} y={h - 2}>Argent</text>

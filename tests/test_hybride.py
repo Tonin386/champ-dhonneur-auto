@@ -331,8 +331,13 @@ def test_meilleures_lignes_au_tour_de_l_ia(client, monkeypatch):
     assert vus == ["heur"] and a["observateur"] == 1 and a["coups"]
     s = jeu.SESSIONS[gid]
     for c in a["coups"]:
-        assert len(c["equipes"]) == len(c["ligne"]) and c["equipes"][0] == s.game.team(1)
-        assert set(c["equipes"]) <= {0, 1}
+        assert len(c["equipes"]) == len(c["ligne"]) == len(c["ligne_cases"]) == len(c["ligne_desc"])
+        assert c["equipes"][0] == s.game.team(1) and set(c["equipes"]) <= {0, 1}
+        assert c["ligne_cases"][0] == c["cases"] and c["ligne_desc"][0] == c["description"]
+        assert 0 <= c["gain_or"] <= 1
+        # pièce d'un coup face cachée du joueur plateau : supposée par la recherche, jamais affichée
+        for d, e in zip(c["ligne_desc"], c["equipes"]):
+            assert e == s.game.team(1) or "(pièce" not in d or not d.startswith(("Passer", "Prendre", "Recruter")), d
     g = s.game.copy()
     meilleur = g.legal_actions()[a["coups"][0]["i"]]
     assert action_str(g, meilleur) == a["coups"][0]["coup"]

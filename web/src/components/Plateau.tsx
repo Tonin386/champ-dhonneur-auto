@@ -17,6 +17,8 @@ interface Props {
   choisie?: number | null;
   survol?: number[] | null;
   conseil?: number[] | null;
+  /** ligne d'analyse survolée : cases de chaque coup et équipe qui le joue (0 Or, 1 Argent) */
+  ligne?: { cases: number[]; equipe: number }[] | null;
   /** clic sur une case (droit = clic droit, pour l'éditeur) */
   onCase?: (i: number, droit: boolean) => void;
   /** cases qui réagissent au clic (toutes si absent) */
@@ -68,7 +70,39 @@ function Fleche({ G, de, a, cls, marqueur }: { G: ReturnType<typeof geometrie>; 
   return <line className={cls} x1={x1} y1={y1} x2={x1 + (x2 - x1) * k} y2={y1 + (y2 - y1) * k} markerEnd={marqueur} />;
 }
 
-export const Plateau = memo(function Plateau({ decor, image, precedente, duree = 400, mini, cle, cibles, choisie, survol, conseil, onCase, cliquables, retourne }: Props) {
+/** Ligne d'analyse : une flèche par déplacement, une pastille numérotée (2 pour le coup suivant…)
+ *  à l'arrivée de chaque coup, à la couleur du camp ; plusieurs coups sur une case s'étagent. */
+function Ligne({ G, ligne }: { G: ReturnType<typeof geometrie>; ligne: { cases: number[]; equipe: number }[] }) {
+  const empiles = new Map<number, number>();
+  const pastilles = ligne.flatMap(({ cases, equipe }, k) => {
+    if (!cases.length) return [];
+    const c = cases[cases.length - 1];
+    const rang = empiles.get(c) ?? 0;
+    empiles.set(c, rang + 1);
+    const [x, y] = G.centre(c);
+    return [{ k, equipe, c, x: x + G.s * (0.5 - 0.56 * rang), y: y - G.s * 0.52 }];
+  });
+  return (
+    <g className="ligne-analyse" aria-hidden="true">
+      {ligne.map(({ cases, equipe }, k) => cases.length > 1 && cases[0] !== cases[cases.length - 1] && (
+        <Fleche key={`lf${k}`} G={G} de={cases[0]} a={cases[cases.length - 1]} cls={`fleche-ligne e${equipe}`}
+          marqueur={`url(#pointe-l${equipe})`} />
+      ))}
+      {pastilles.map(({ k, equipe, c }) => {
+        const [x, y] = G.centre(c);
+        return <circle key={`la${k}`} className={`anneau-ligne e${equipe}`} cx={x} cy={y} r={G.s * 0.8} />;
+      })}
+      {pastilles.map(({ k, equipe, x, y }) => (
+        <g key={`lp${k}`} className={`pastille-ligne e${equipe}${k === 0 ? " premier" : ""}`}>
+          <circle cx={x} cy={y} r={G.s * 0.3} />
+          <text x={x} y={y}>{k + 1}</text>
+        </g>
+      ))}
+    </g>
+  );
+}
+
+export const Plateau = memo(function Plateau({ decor, image, precedente, duree = 400, mini, cle, cibles, choisie, survol, conseil, ligne, onCase, cliquables, retourne }: Props) {
   const G = retourne ? geometrieRetournee(decor) : geometrie(decor);
   const a = image.a;
   const cases = a?.c ?? [];
@@ -97,6 +131,11 @@ export const Plateau = memo(function Plateau({ decor, image, precedente, duree =
         <marker id="pointe-c" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="3.4" markerHeight="3.4" orient="auto">
           <path d="M0,0 L10,5 L0,10 z" className="pointe conseil" />
         </marker>
+        {[0, 1].map(e => (
+          <marker key={e} id={`pointe-l${e}`} viewBox="0 0 10 10" refX="6" refY="5" markerWidth="3.2" markerHeight="3.2" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" className={`pointe-ligne e${e}`} />
+          </marker>
+        ))}
         <radialGradient id="parchemin" cx="50%" cy="40%" r="70%">
           <stop offset="0%" stopColor="var(--case-clair)" />
           <stop offset="100%" stopColor="var(--case)" />
@@ -145,6 +184,7 @@ export const Plateau = memo(function Plateau({ decor, image, precedente, duree =
         const [x, y] = G.centre(u[1]);
         return <Unite key={u[0]} u={u} decor={decor} x={x} y={y} mini={mini} />;
       })}
+      {ligne && ligne.length > 0 && <Ligne G={G} ligne={ligne} />}
       {conseil && conseil.length > 1 && conseil[0] !== conseil[conseil.length - 1] && (
         <Fleche G={G} de={conseil[0]} a={conseil[conseil.length - 1]} cls="fleche conseil" marqueur="url(#pointe-c)" />
       )}

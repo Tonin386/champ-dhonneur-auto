@@ -90,6 +90,7 @@ export interface EtatJeu {
   piece: string | null; // pièce de la main choisie
   caseChoisie: number | null;
   survol: number[] | null; // cases du coup survolé dans une liste
+  survolLigne: number | null; // rang de la ligne d'analyse survolée : montrée sur le plateau
   mode: Mode;
   dialogue: boolean;
   onglet: "coups" | "analyse";
@@ -236,7 +237,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
       // nouvelle partie : aides à la décision masquées
       ...(nouvelle ? { aides: false } : {}),
       pos: auBout || nouvelle || s.pos >= images.length ? images.length - 1 : s.pos,
-      piece: null, caseChoisie: null, survol: null, occupe: false,
+      piece: null, caseChoisie: null, survol: null, survolLigne: null, occupe: false,
     });
     if (nouvelle) ecrire(PARTIE, e.id);
   };
@@ -273,6 +274,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
     piece: null,
     caseChoisie: null,
     survol: null,
+    survolLigne: null,
     mode: "jeu",
     dialogue: false,
     onglet: "coups",
@@ -409,7 +411,7 @@ export const useJeu = create<EtatJeu>()((set, get) => {
 
     aller: pos => {
       const n = get().images.length;
-      set({ pos: Math.max(0, Math.min(pos, n - 1)), piece: null, caseChoisie: null, survol: null });
+      set({ pos: Math.max(0, Math.min(pos, n - 1)), piece: null, caseChoisie: null, survol: null, survolLigne: null });
     },
     pas: d => get().aller(get().pos + d),
 

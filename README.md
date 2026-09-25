@@ -125,8 +125,11 @@ en haut) :
   (profondeur, horizon en coups anticipés, simulations) et s'affiche au fur et à mesure, jusqu'à
   une durée (1 s à 5 min), une profondeur, un nombre de simulations, ou sans limite (par défaut :
   analyse infinie, bouton « Arrêter »). Ses coups sont classés comme l'IA choisit le sien : le
-  premier est celui qu'elle jouerait. Chaque ligne est entière, chaque coup à la couleur du camp
-  qui le joue. En relecture, le coup joué ensuite est évalué, avec son écart au meilleur coup.
+  premier est celui qu'elle jouerait. Chaque ligne donne son score, son écart au premier coup, les
+  chances de gain du joueur au trait et la part de la réflexion qui lui est consacrée, puis la suite
+  attendue, numérotée, chaque coup à la couleur du camp qui le joue ; survolée, la ligne est
+  dessinée sur le plateau (flèches et pastilles numérotées). L'évaluation s'accompagne des chances
+  de gain de chaque camp (barre Or / Argent). En relecture, le coup joué ensuite est évalué, avec son écart au meilleur coup.
   L'analyse n'utilise que l'information du joueur au trait ;
 - **parties** : chaque partie (dès sa première décision) est enregistrée dans `./parties`
   (`CHAMP_PARTIES`, un fichier JSON par partie) ; la fenêtre « Parties » liste les parties en

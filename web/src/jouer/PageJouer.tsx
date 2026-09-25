@@ -3,7 +3,7 @@ import { Chronique } from "../components/Chronique";
 import { Joueur, Piece } from "../components/Joueur";
 import { Plateau } from "../components/Plateau";
 import { EQUIPE, NOMS } from "../jeu";
-import { Analyse, BarreEval, CourbeEval, JouerMaintenant, libelleScore } from "./Analyse";
+import { Analyse, BarreEval, Chances, CourbeEval, JouerMaintenant, libelleScore } from "./Analyse";
 import { Editeur, PanneauPosition } from "./Editeur";
 import { DialogueNouvelle } from "./Nouvelle";
 import { DialogueParties } from "./Parties";
@@ -150,8 +150,14 @@ function KpiEval() {
   return (
     <div className="kpi eval" title="10 = un bastion d'avance · + Or, − Argent · #n = victoire forcée en n coups">
       <div className="label">Évaluation{enAnalyse ? " · calcul…" : ""}</div>
-      <div className={`val ${txt?.cls ?? ""}`}>{txt?.texte ?? "…"}</div>
+      <div className="val-eval">
+        <span className={`val ${txt?.cls ?? ""}`}>{txt?.texte ?? "…"}</span>
+        {a?.gain_or !== undefined && !a.fini && (
+          <span className="chances-kpi">Or <b>{Math.round(100 * a.gain_or)} %</b> · <b>{100 - Math.round(100 * a.gain_or)} %</b> Argent</span>
+        )}
+      </div>
       <div className="det">{txt?.detail ?? "analyse en cours"}</div>
+      {a?.gain_or !== undefined && !a.fini && <Chances gainOr={a.gain_or} compact />}
     </div>
   );
 }
@@ -325,6 +331,7 @@ function PlateauJeu() {
   const retourne = useJeu(s => s.retourne);
   const img = useImageAffichee();
   const apercu = img !== images[pos];   // hybride : coup de l'IA joué, pioche en attente
+  const survolLigne = useJeu(s => s.survolLigne);
 
   const { cibles, cliquables } = useMemo(() => {
     const cibles = new Map<number, "attaque" | "jouable">();
@@ -352,12 +359,15 @@ function PlateauJeu() {
     s.choisirCase(i);
     s.set({ onglet: "coups" });
   };
-  const conseil = analyse && fleche && !survol && a?.coups?.[0]?.cases?.length ? a.coups[0].cases : null;
+  // ligne d'analyse survolée : dessinée sur le plateau (coups numérotés, couleur du camp)
+  const c = survolLigne !== null && analyse ? a?.coups?.[survolLigne] : undefined;
+  const ligne = c ? (c.ligne_cases ?? [c.cases]).map((cases, k) => ({ cases, equipe: c.equipes?.[k] ?? img.t })) : null;
+  const conseil = analyse && fleche && !survol && !ligne && a?.coups?.[0]?.cases?.length ? a.coups[0].cases : null;
   return (
     <Plateau
       key={decor.graine + ":" + decor.unites.join()} decor={decor} image={img}
       precedente={apercu ? images[pos] : pos > 0 ? images[pos - 1] : null}
-      duree={380} cle={apercu ? pos + 1 : pos} cibles={cibles} choisie={caseChoisie} survol={survol} conseil={conseil}
+      duree={380} cle={apercu ? pos + 1 : pos} cibles={cibles} choisie={caseChoisie} survol={survol} conseil={conseil} ligne={ligne}
       onCase={tous.length ? onCase : undefined} cliquables={cliquables} retourne={retourne}
     />
   );
@@ -595,14 +605,21 @@ function ListeCoups() {
   );
 }
 
+/** Onglet affiché à droite ; au tour de l'IA, sa réflexion est toujours disponible (hybride :
+ *  l'analyse vue par l'IA aussi). */
+function useOnglet(): { onglet: "coups" | "analyse"; aides: boolean } {
+  const onglet = useJeu(s => s.onglet);
+  const tourIA = useTourIA();
+  const fini = useJeu(s => s.fini);
+  const aides = useAides() || (tourIA && !fini);
+  return { onglet: aides ? onglet : "coups", aides };
+}
+
 function PanneauCote() {
-  const onglet0 = useJeu(s => s.onglet);
   const hybride = useJeu(s => s.hybride);
   const tourIA = useTourIA();
   const fini = useJeu(s => s.fini);
-  // au tour de l'IA, sa réflexion est toujours visible (hybride : l'analyse vue par l'IA aussi)
-  const aides = useAides() || (tourIA && !fini);
-  const onglet = aides ? onglet0 : "coups";
+  const { onglet, aides } = useOnglet();
   const n = useCoups().tous.length;
   const s = useJeu.getState();
   return (
@@ -640,6 +657,7 @@ export function PageJouer() {
   const erreur = useJeu(s => s.erreur);
   const info = useJeu(s => s.info);
   const analyse = useAnalyseActive();
+  const { onglet } = useOnglet();
   const demarre = useRef(false);
   useAnalyseAuto();
   useClavier();
@@ -659,7 +677,8 @@ export function PageJouer() {
       <BarreJeu />
       <main className="milieu">
         {mode === "editeur" ? <Editeur /> : <Scene />}
-        <div className="droite">
+        {/* analyse ouverte : elle prend l'essentiel de la colonne, le déroulé se réduit */}
+        <div className={`droite${mode === "jeu" && onglet === "analyse" ? " large-analyse" : ""}`}>
           {mode === "editeur" ? <PanneauPosition /> : <><DerouleJeu /><PanneauCote /></>}
         </div>
       </main>

@@ -77,6 +77,9 @@ export interface CoupAnalyse {
   texte: string;
   ligne: string[];
   equipes?: number[]; // équipe qui joue chaque coup de la ligne (0 Or, 1 Argent)
+  ligne_cases?: number[][]; // cases touchées par chaque coup de la ligne
+  ligne_desc?: string[]; // description de chaque coup de la ligne
+  gain_or?: number; // chances de gain d'Or après ce coup, dans [0, 1] (une nulle compte pour moitié)
   cases: number[];
   i: number; // index du coup parmi les coups légaux
 }

@@ -89,7 +89,7 @@ button.pause-demandee { border-color: var(--or); color: var(--or); }
 .connexion.ok { background: var(--ok); box-shadow: 0 0 0 0.25rem rgba(95, 184, 122, 0.2); }
 
 /* ---------------------------------------------------------------- milieu */
-.milieu { display: grid; grid-template-columns: minmax(0, 1fr) 27rem; gap: 0.8rem; min-height: 0; }
+.milieu { display: grid; grid-template-columns: minmax(0, 1fr) clamp(27rem, 25vw, 34rem); gap: 0.8rem; min-height: 0; }
 .scene { display: grid; grid-template-columns: 16rem minmax(0, 1fr) 16rem; gap: 0.8rem; min-height: 0; }
 .centre { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; min-width: 0; }
 .entete-partie { display: flex; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; font-size: 1.05rem; }
@@ -226,8 +226,9 @@ button.pause-demandee { border-color: var(--or); color: var(--or); }
 @keyframes pouls { 50% { box-shadow: 0 0 0 0.35rem rgba(229, 72, 77, 0); } 0% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.7); } }
 
 /* ---------------------------------------------------------------- colonne de droite */
-.droite { display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr); gap: 0.8rem; min-height: 0; }
-.panneau, .cote { background: var(--panneau); border: 1px solid var(--bord); border-radius: 0.8rem; padding: 0.7rem 0.8rem; min-height: 0; display: flex; flex-direction: column; }
+.droite { display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr); gap: 0.8rem; min-height: 0; min-width: 0; }
+.droite.large-analyse { grid-template-rows: minmax(7rem, 0.4fr) minmax(0, 1.6fr); }
+.panneau, .cote { background: var(--panneau); border: 1px solid var(--bord); border-radius: 0.8rem; padding: 0.7rem 0.8rem; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .panneau h2 { font: 400 1.2rem var(--titre); margin: 0 0 0.4rem; }
 .chronique { list-style: none; margin: 0; padding: 0 0.2rem 0 0; overflow-y: auto; flex: 1; min-height: 0; scrollbar-width: thin; }
 .chronique li { display: grid; grid-template-columns: 0.7rem 5.5rem minmax(0, 1fr); gap: 0.5rem; align-items: center; padding: 0.2rem 0.3rem; border-radius: 0.3rem; cursor: pointer; font-size: 0.95rem; }
@@ -333,15 +334,15 @@ button.pause-demandee { border-color: var(--or); color: var(--or); }
 .badge.vivant { background: var(--or); color: #2b2418; border-color: var(--or-2); }
 
 /* barre d'évaluation : Argent en haut, Or en bas, comme les camps sur le plateau */
-.table-bois.avec-barre { padding-left: 3rem; }
+.table-bois.avec-barre { padding-left: 3.4rem; }
 .barre-eval {
-  position: absolute; left: 0.9rem; top: 0.9rem; bottom: 0.9rem; width: 1.3rem; border-radius: 0.35rem; overflow: hidden;
+  position: absolute; left: 0.9rem; top: 0.9rem; bottom: 0.9rem; width: 1.7rem; border-radius: 0.4rem; overflow: hidden;
   background: linear-gradient(#56646b, #3a454b); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0.1rem 0.4rem rgba(0, 0, 0, 0.4);
 }
 .part-or { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(#f3d27a, #c89a3a); transition: height 0.6s cubic-bezier(0.3, 0.8, 0.3, 1); }
 .part-or::before { content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 2px; background: rgba(255, 255, 255, 0.55); }
 .texte-barre {
-  position: absolute; left: 0; right: 0; text-align: center; font: 700 0.62rem/1 var(--texte-f); letter-spacing: -0.02em;
+  position: absolute; left: 0; right: 0; text-align: center; font: 700 0.76rem/1 var(--texte-f); letter-spacing: -0.02em;
   writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; padding: 0.4rem 0;
 }
 .texte-barre.bas { bottom: 0; }
@@ -364,6 +365,23 @@ button.pause-demandee { border-color: var(--or); color: var(--or); }
 .fleche.conseil { stroke: #3f8fd6; stroke-width: 6; opacity: 0.75; }
 .pointe.conseil { fill: #3f8fd6; }
 .anneau-conseil { fill: none; stroke: #3f8fd6; stroke-width: 4.5; opacity: 0.8; pointer-events: none; }
+/* ligne d'analyse survolée : flèches et pastilles numérotées à la couleur du camp */
+.fleche-ligne { stroke-width: 4; stroke-linecap: round; stroke-dasharray: 8 5; opacity: 0.9; pointer-events: none; }
+.fleche-ligne.e0 { stroke: #d39b22; }
+.fleche-ligne.e1 { stroke: #4f6673; }
+.pointe-ligne.e0 { fill: #d39b22; }
+.pointe-ligne.e1 { fill: #4f6673; }
+.pastille-ligne { pointer-events: none; }
+.pastille-ligne circle { stroke-width: 2; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)); }
+.pastille-ligne.e0 circle { fill: var(--e0); stroke: var(--e0-bord); }
+.pastille-ligne.e1 circle { fill: var(--e1); stroke: var(--e1-bord); }
+.pastille-ligne.premier circle { stroke: #3f8fd6; stroke-width: 3; }
+.pastille-ligne text { font: 700 13px var(--texte-f); text-anchor: middle; dominant-baseline: central; }
+.anneau-ligne { fill: none; stroke-width: 3.5; stroke-dasharray: 7 5; opacity: 0.85; pointer-events: none; }
+.anneau-ligne.e0 { stroke: #d39b22; }
+.anneau-ligne.e1 { stroke: #4f6673; }
+.pastille-ligne.e0 text { fill: var(--e0-encre); }
+.pastille-ligne.e1 text { fill: var(--e1-encre); }
 
 /* main cliquable */
 .bouton-piece { display: inline-flex; padding: 0; border: 0; background: none; border-radius: 50%; transition: transform 0.12s; }
@@ -442,11 +460,28 @@ button.danger { background: rgba(224, 96, 74, 0.25); border-color: var(--attaque
 .cote p.vide button { margin-top: 0.5rem; display: block; }
 
 /* analyse */
-.analyse { display: flex; flex-direction: column; gap: 0.6rem; min-height: 0; flex: 1; }
+.analyse { display: flex; flex-direction: column; gap: 0.55rem; min-height: 0; flex: 1; }
 .analyse.vide p { color: var(--texte-2); margin: 0; }
 .analyse.vide > button { align-self: flex-start; }
-.tete-analyse { display: flex; gap: 0.8rem; align-items: center; }
-.gros-score { font: 700 2.4rem/1 var(--texte-f); font-variant-numeric: tabular-nums; min-width: 6.5rem; }
+.tete-analyse { display: flex; gap: 0.9rem; align-items: center; }
+.gros-score { font: 700 2.6rem/1 var(--texte-f); font-variant-numeric: tabular-nums; min-width: 6.5rem; }
+/* chances de gain : Or et Argent, dans l'ordre des colonnes des joueurs */
+.chances { display: flex; flex-direction: column; gap: 0.25rem; }
+.chances .libelles { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; font-size: 0.85rem; color: var(--texte-2); }
+.chances .libelles b { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.chances .or b { color: var(--or-score); }
+.chances .argent b { color: var(--argent-score); }
+.chances .quoi { font-size: 0.75rem; color: var(--texte-3); }
+.jauge-chances { position: relative; height: 0.55rem; border-radius: 0.3rem; overflow: hidden; background: linear-gradient(#b9c6cc, #7d8e96);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35); }
+.jauge-chances::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: rgba(13, 27, 23, 0.55); }
+.part-or-h { height: 100%; background: linear-gradient(#f3d27a, #c89a3a); transition: width 0.6s cubic-bezier(0.3, 0.8, 0.3, 1); }
+.chances.retournee .libelles { flex-direction: row-reverse; }
+.chances.retournee .jauge-chances { transform: scaleX(-1); }
+.chances.compact .jauge-chances { height: 0.3rem; margin-top: 0.3rem; }
+.val-eval { display: flex; align-items: baseline; gap: 0.7rem; min-width: 0; }
+.chances-kpi { font-size: 0.85rem; color: var(--texte-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chances-kpi b { color: var(--texte); font-variant-numeric: tabular-nums; }
 .det-score { display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.85rem; color: var(--texte-2); min-width: 0; }
 .det-score b { color: var(--texte); font-size: 1rem; }
 .det-score .indispo { color: var(--texte-3); }
@@ -471,29 +506,61 @@ button.danger { background: rgba(224, 96, 74, 0.25); border-color: var(--attaque
 .reglages-analyse select { margin-left: 0.3rem; font-size: 0.85rem; }
 .case-a-cocher { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
 .case-a-cocher input { accent-color: var(--or); width: 1rem; height: 1rem; }
+/* lignes de l'analyse : rang, score, écart au meilleur, coup, part de la réflexion, suite numérotée */
+.titre-lignes { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin-top: 0.1rem;
+  font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--texte-2); }
+.titre-lignes .aide-lignes { text-transform: none; letter-spacing: 0; font-size: 0.75rem; color: var(--texte-3); }
+.meilleurs { gap: 0.35rem; }
 .meilleurs button {
-  width: 100%; display: grid; grid-template-columns: 4rem 6.2rem minmax(0, 1fr) 2.6rem; grid-template-areas: "s c d p" "s l l l";
-  gap: 0.1rem 0.5rem; align-items: baseline; text-align: left; background: var(--fond-2); padding: 0.35rem 0.6rem;
+  width: 100%; display: grid; grid-template-columns: 1.5rem 4.3rem minmax(0, 1fr) 4.4rem;
+  grid-template-areas: "r s c p" "r x l g";
+  gap: 0.15rem 0.55rem; align-items: baseline; text-align: left; background: var(--fond-2); padding: 0.45rem 0.6rem;
+  border-left: 0.22rem solid var(--bord);
 }
-.meilleurs button:disabled { opacity: 1; cursor: default; }
-.meilleurs button:not(:disabled):hover { border-color: var(--or); background: #1f3a31; }
-.meilleurs .s { grid-area: s; font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
-.meilleurs .c { grid-area: c; color: var(--or); font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.meilleurs .d { grid-area: d; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.meilleurs .p { grid-area: p; font-size: 0.8rem; color: var(--texte-3); text-align: right; font-variant-numeric: tabular-nums; }
-/* ligne entière (sur plusieurs lignes au besoin), chaque coup à la couleur du camp qui le joue */
-.meilleurs .l { grid-area: l; font: 0.78rem var(--mono); color: var(--texte-3); display: flex; flex-wrap: wrap; gap: 0.1rem 0.6em; }
-.meilleurs .l .m.e0 { color: var(--or-score); }
-.meilleurs .l .m.e1 { color: var(--argent-score); }
+.meilleurs .premier button { background: #1d3b31; border-color: var(--or-2); border-left-color: var(--or); }
+.meilleurs button[aria-disabled="true"] { cursor: default; }
+.meilleurs button:hover, .meilleurs button:focus-visible { border-color: var(--or); background: #22433a; }
+.meilleurs .rang { grid-area: r; align-self: start; width: 1.45rem; height: 1.45rem; border-radius: 50%; display: grid; place-items: center;
+  font-size: 0.8rem; font-weight: 700; background: var(--panneau-2); color: var(--texte-2); border: 1px solid var(--bord); }
+.meilleurs .premier .rang { background: var(--or); color: #2b2418; border-color: var(--or-2); }
+.meilleurs .s { grid-area: s; font-weight: 700; font-size: 1.25rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.meilleurs .ecart { grid-area: x; font-size: 0.75rem; color: var(--texte-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.meilleurs .premier .ecart { color: var(--or); }
+.meilleurs .c { grid-area: c; display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
+.meilleurs .c code { flex: none; color: var(--or); font-size: 0.95rem; font-weight: 600; }
+.meilleurs .d { min-width: 0; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meilleurs .g { grid-area: g; align-self: start; font-size: 0.72rem; color: var(--texte-3); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.meilleurs .p { grid-area: p; display: flex; align-items: center; justify-content: flex-end; gap: 0.35rem;
+  font-size: 0.75rem; color: var(--texte-3); font-variant-numeric: tabular-nums; }
+.jauge-part { display: inline-block; width: 2rem; height: 0.3rem; border-radius: 0.15rem; background: var(--panneau-2); overflow: hidden; }
+.jauge-part > span { display: block; height: 100%; background: var(--texte-3); }
+.meilleurs .premier .jauge-part > span { background: var(--or); }
+.meilleurs .pv { grid-area: l; display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.1rem; min-height: 1.2rem; }
+.pv .m { font: 0.78rem var(--mono); padding: 0.05rem 0.35rem; border-radius: 0.3rem; border: 1px solid var(--bord); white-space: nowrap; }
+.pv .m i { font: normal 600 0.65rem var(--texte-f); opacity: 0.65; margin-right: 0.25rem; }
+.pv .m.e0 { color: var(--or-score); background: rgba(233, 185, 73, 0.1); border-color: rgba(233, 185, 73, 0.35); }
+.pv .m.e1 { color: var(--argent-score); background: rgba(207, 217, 222, 0.08); border-color: rgba(207, 217, 222, 0.3); }
 /* réflexion de l'IA : c'est l'utilisateur qui décide quand elle joue */
-.tete-reflexion { display: flex; gap: 0.6rem; align-items: center; justify-content: space-between; flex-wrap: wrap;
-  padding: 0.45rem 0.6rem; border-left: 0.2rem solid var(--or); background: var(--fond-2); border-radius: 0.2rem; }
-.tete-reflexion > div { display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.85rem; color: var(--texte-2); min-width: 0; }
-.tete-reflexion b { color: var(--or); font-size: 0.95rem; }
-.jouer-maintenant { display: inline-flex; gap: 0.45rem; align-items: baseline; white-space: nowrap; }
-.jouer-maintenant code { font-size: 0.85rem; font-weight: 500; }
+.tete-reflexion { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.55rem 0.65rem; border-radius: 0.5rem;
+  border: 1px solid var(--or-2); border-left: 0.25rem solid var(--or); background: linear-gradient(rgba(233, 185, 73, 0.11), rgba(233, 185, 73, 0.03)); }
+.titre-reflexion { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.2rem 0.5rem; font-size: 0.82rem; color: var(--texte-2); }
+.titre-reflexion b { color: var(--or); font-size: 1rem; }
+.pouls { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--texte-3); align-self: center; flex: none; }
+.pouls.actif { background: var(--or); animation: pouls-or 1.4s infinite; }
+@keyframes pouls-or { 0% { box-shadow: 0 0 0 0 rgba(233, 185, 73, 0.7); } 70%, 100% { box-shadow: 0 0 0 0.4rem rgba(233, 185, 73, 0); } }
+.jouer-maintenant { display: inline-flex; align-items: center; gap: 0.5rem; white-space: nowrap; }
+.jouer-maintenant code { font-size: 0.85rem; font-weight: 700; padding: 0.05rem 0.35rem; border-radius: 0.25rem; background: rgba(43, 36, 24, 0.14); }
+.jouer-maintenant kbd { font: 600 0.68rem var(--texte-f); padding: 0.05rem 0.35rem; border-radius: 0.25rem; border: 1px solid rgba(43, 36, 24, 0.4); opacity: 0.75; }
+.jouer-maintenant.large { width: 100%; min-width: 0; overflow: hidden; padding: 0.5rem 0.7rem; font-size: 1rem; }
+.jouer-maintenant.large .desc { flex: 1 1 0; width: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; font-size: 0.88rem; font-weight: 500; }
 .attente-ia { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
 .attente-ia p { margin: 0; }
+/* pied de l'analyse : mesures de la recherche, limite, options, légende */
+.pied-analyse { display: flex; flex-direction: column; gap: 0.35rem; padding-top: 0.45rem; border-top: 1px solid var(--bord); }
+.pied-analyse .recherche .mesures { font-size: 0.78rem; gap: 0.1rem 0.7rem; }
+.pied-analyse .reglages-analyse { gap: 0.6rem; font-size: 0.8rem; }
+.pied-analyse .reglages-analyse select, .pied-analyse .reglages-analyse button { font-size: 0.8rem; padding: 0.2rem 0.5rem; }
+.pied-analyse .legende-eval[open] dl { max-height: 14rem; overflow-y: auto; }
 .legende-eval { font-size: 0.85rem; color: var(--texte-2); }
 .legende-eval summary { cursor: pointer; color: var(--texte-3); }
 .legende-eval dl { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: 0.3rem 0.6rem; margin: 0.5rem 0 0; }
@@ -501,7 +568,14 @@ button.danger { background: rgba(224, 96, 74, 0.25); border-color: var(--attaque
 .legende-eval dd { margin: 0; }
 
 /* courbe d'évaluation (bas de page) */
-.courbe-eval .zone { height: 5.2rem; cursor: pointer; }
+.courbe-eval .zone { height: 3.6rem; cursor: pointer; }
+.courbe-eval .point-eval { fill: var(--texte-2); stroke: var(--panneau); stroke-width: 1.5; }
+.courbe-eval .point-eval.or { fill: var(--or-score); }
+.courbe-eval .point-eval.argent { fill: var(--argent-score); }
+.courbe-eval .point-eval.ici { stroke: var(--or); stroke-width: 2; }
+.valeur-courbe { font-size: 0.8rem; color: var(--texte-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.valeur-courbe.or b { color: var(--or-score); }
+.valeur-courbe.argent b { color: var(--argent-score); }
 .courbe-eval .aire-or { fill: var(--or-score); opacity: 0.35; }
 .courbe-eval .aire-argent { fill: var(--argent-score); opacity: 0.25; }
 .courbe-eval .courbe { stroke: var(--texte); stroke-width: 1.6; }
@@ -701,6 +775,7 @@ table.valeurs { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
   .scene { grid-template-columns: 1fr; }
   .table-bois { min-height: 70vw; }
   .droite { grid-template-rows: 22rem 28rem; }
+  .droite.large-analyse { grid-template-rows: 14rem 42rem; }
   .graphes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   :root { font-size: 14px; }
 }

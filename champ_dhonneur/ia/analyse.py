@@ -4,8 +4,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..engine import Game
+import re
+
+from ..engine import FACE_DOWN, Game
 from ..notation import action_str, describe
+
+_PIECE = re.compile(r" \(pièce [^)]*\)")
 
 
 def bot_analyse(simulations: int = 400, modele: str | None = None, dispositif: str | None = None):
@@ -65,8 +69,7 @@ def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int
     total = max(float(res.visites.sum()), 1.0)
 
     def ligne(a) -> dict:
-        coups, equipes = _ligne(game, a, racine, observateur, profondeur)
-        return {"ligne": coups, "equipes": equipes}
+        return _ligne(game, a, racine, observateur, profondeur)
 
     def coup(i: int) -> dict:
         a = legal[i]
@@ -76,7 +79,7 @@ def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int
                 "probabilite": round(float(res.politique[i]), 3), "q": round(float(res.q[i]), 3),
                 "visites": int(res.visites[i]), "part": round(float(res.visites[i]) / total, 3),
                 "score": round(sc, 1), "texte": texte_score(sc) if res.visites[i] > 0 else "—", "action": a,
-                **ligne(a)}
+                "gain_or": round((1 + v_or) / 2, 3), **ligne(a)}
 
     coups = [coup(i) for i in ordre[:top]]
     if mat and mat["action"] is not None:
@@ -90,6 +93,7 @@ def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int
         coups = [c0] + [c for c in coups if c is not c0][:top - 1]
         c0["score"] = 99.9 if mat["equipe"] == 0 else -99.9
         c0["texte"] = texte_mat(mat["equipe"], mat["coups"])
+        c0["gain_or"] = 1.0 if mat["equipe"] == 0 else 0.0
     # score de la position : celui du coup choisi (comme un moteur d'échecs) ; la moyenne de toutes
     # les simulations de la racine compterait aussi les coups médiocres explorés puis écartés
     v_pos = float(res.q[best]) if res.visites[best] > 0 else float(res.valeur)
@@ -122,15 +126,24 @@ def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int
     return out
 
 
-def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> tuple[list[str], list[int]]:
-    """Suite la plus explorée par la recherche après a0, groupée en coups (notation publique), et
-    l'équipe qui joue chacun de ces coups (0 Or, 1 Argent)."""
+def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> dict:
+    """Suite la plus explorée par la recherche après a0, groupée en coups : notation publique
+    (`ligne`), équipe qui joue chaque coup (`equipes`, 0 Or, 1 Argent), cases touchées
+    (`ligne_cases`) et description (`ligne_desc` ; pièce d'un coup face cachée de l'adversaire de
+    l'observateur omise : elle n'est que supposée par la recherche)."""
+    def decrire(g: Game, a, p: int) -> str:
+        d = describe(g, a)
+        return _PIECE.sub("", d) if observateur is not None and p != observateur and a.kind in FACE_DOWN else d
+
     if racine is None or a0 not in racine.enfants:
-        return [action_str(game, a0, hidden=False)], [game.team(game.to_move)]
+        return {"ligne": [action_str(game, a0, hidden=False)], "equipes": [game.team(game.to_move)],
+                "ligne_cases": [list(a0.cells)], "ligne_desc": [decrire(game, a0, game.to_move)]}
     from ..score import _mettre_en_main
     g = game.copy()
     coups: list[str] = []
     equipes: list[int] = []
+    cases: list[list[int]] = []
+    descs: list[str] = []
     node, a = racine, a0
     for _ in range(profondeur):
         p = g.to_move
@@ -143,10 +156,15 @@ def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> 
         if principal or not coups:
             coups.append(s)
             equipes.append(g.team(p))
+            cases.append(list(a.cells))
+            descs.append(decrire(g, a, p))
         elif a.kind == "rg_reserve":
             coups[-1] += "(R)"
         elif a.kind not in ("skip", "rg_unit"):
             coups[-1] += ">" + s
+            cases[-1] += list(a.cells)
+            d = decrire(g, a, p)
+            descs[-1] += ", puis " + d[:1].lower() + d[1:]
         g.apply(a)
         node = node.enfants.get(a)
         if g.done or node is None or not node.enfants:
@@ -154,7 +172,7 @@ def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> 
         a, suivant = max(node.enfants.items(), key=lambda kv: kv[1].n)
         if suivant.n < 2:
             break
-    return coups, equipes
+    return {"ligne": coups, "equipes": equipes, "ligne_cases": cases, "ligne_desc": descs}
 
 
 def texte(analyse: dict) -> str:
