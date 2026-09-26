@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { compact } from "../jeu";
-import type { Tableau } from "../types";
+import type { Separation, Tableau } from "../types";
 
 interface Serie {
   cle: string;
@@ -35,7 +35,9 @@ function bornes(vals: number[]): [number, number] {
 }
 
 /** Petit graphique d'une seule série ; le survol est partagé par tous (même itération). */
-function MiniGraphe({ s, survol, setSurvol, droite }: { s: Serie; survol: number | null; setSurvol: (i: number | null) => void; droite?: boolean }) {
+function MiniGraphe({ s, survol, setSurvol, droite, separations }: {
+  s: Serie; survol: number | null; setSurvol: (i: number | null) => void; droite?: boolean; separations?: Separation[];
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [taille, setTaille] = useState({ w: 300, h: 110 });
   useLayoutEffect(() => {
@@ -55,7 +57,9 @@ function MiniGraphe({ s, survol, setSurvol, droite }: { s: Serie; survol: number
   const vals = pts.map(p => p[1]).concat((s.refs ?? []).map(r => r[1]));
   // échelle fixe : de la valeur basse jusqu'au plafond minimal (ou au-delà, avec une marge)
   const [lo, hi] = s.echelle ? [s.echelle[0], Math.max(s.echelle[1], ...vals.map(v => v * 1.15))] : bornes(vals);
-  const x0 = pts.length ? pts[0][0] : 0, x1 = pts.length ? Math.max(pts[pts.length - 1][0], x0 + 1) : 1;
+  // l'axe inclut les séparations (visibles dès le début d'un nouvel entraînement, avant ses premiers points)
+  const x0 = pts.length ? pts[0][0] : 0;
+  const x1 = pts.length ? Math.max(pts[pts.length - 1][0], x0 + 1, ...(separations ?? []).map(sp => sp.iteration + 1)) : 1;
   const X = (x: number) => gx + ((w - 2 * gx) * (x - x0)) / (x1 - x0);
   const Y = (v: number) => gy + ((h - gy - bas) * (hi - v)) / (hi - lo);
   const dernier = pts[pts.length - 1];
@@ -89,6 +93,12 @@ function MiniGraphe({ s, survol, setSurvol, droite }: { s: Serie; survol: number
         ) : (
           <svg width={w} height={h} onPointerMove={bouger} onPointerLeave={() => setSurvol(null)} role="img" aria-label={s.titre}>
             <line className="axe" x1={gx} x2={w - gx} y1={h - bas} y2={h - bas} />
+            {(separations ?? []).filter(sp => sp.iteration > x0 && sp.iteration < x1).map(sp => (
+              <g key={sp.iteration} className="separation">
+                <line x1={X(sp.iteration)} x2={X(sp.iteration)} y1={gy} y2={h - bas} />
+                <text x={X(sp.iteration) + 3} y={gy + 8}>{sp.libelle}</text>
+              </g>
+            ))}
             {(s.refs ?? []).map(([nom, v]) => (
               <g key={nom} className="ref">
                 <line x1={gx} x2={w - gx} y1={Y(v)} y2={Y(v)} />
@@ -155,7 +165,8 @@ export function Graphes({ t }: { t: Tableau }) {
   ];
   return (
     <div className="graphes">
-      {series.map((s, k) => <MiniGraphe key={s.cle} s={s} survol={survol} setSurvol={setSurvol} droite={k >= series.length / 2} />)}
+      {series.map((s, k) => <MiniGraphe key={s.cle} s={s} survol={survol} setSurvol={setSurvol}
+        droite={k >= series.length / 2} separations={t.separations} />)}
     </div>
   );
 }

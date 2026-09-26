@@ -111,10 +111,21 @@ export type Series = Record<
   (number | null)[]
 > & { amorce: boolean[] };
 
+export interface Separation {
+  /** position (entre deux itérations, ex. 244,5) */
+  iteration: number;
+  libelle: string;
+}
+
 export interface Tableau {
   nom: string;
   maintenant: number;
+  /** itération dans la numérotation continue de la lignée (entraînements précédents compris) */
   iteration: number;
+  /** itération de l'entraînement en cours */
+  iteration_run?: number;
+  /** changements d'entraînement de la lignée (ex. règles) : ligne verticale sur les courbes */
+  separations?: Separation[];
   meilleur: string | null;
   elo_meilleur: number | null;
   ancres: Record<string, number>;
@@ -170,4 +181,6 @@ export interface MesureUnites {
 export interface Unites {
   historique: MesureUnites[];
   draft: { iteration: number; parties_draft: number; victoires_choisit: number }[];
+  /** changements d'entraînement (ex. règles) : ligne verticale entre deux itérations */
+  separations?: Separation[];
 }

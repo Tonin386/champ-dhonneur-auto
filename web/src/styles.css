@@ -307,6 +307,9 @@ button.pause-demandee { border-color: var(--or); color: var(--or); }
 .graphe .axe { stroke: var(--grille); stroke-width: 1; }
 .graphe .ref line { stroke: #4d6b60; stroke-width: 1; }
 .graphe .ref text { font: 0.7rem var(--texte-f); fill: var(--texte-3); text-anchor: end; }
+/* changement d'entraînement (ex. règles des cartes v2) : ligne verticale nette et libellé */
+.graphe .separation line, .evolution .separation line { stroke: var(--or); stroke-width: 1.5; stroke-dasharray: 5 3; }
+.graphe .separation text, .evolution .separation text { font: 600 0.68rem var(--texte-f); fill: var(--or); text-anchor: start; }
 .graphe .courbe { fill: none; stroke: var(--serie); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .graphe .aire { fill: var(--serie); opacity: 0.1; }
 .graphe .point { fill: var(--serie); stroke: var(--panneau); stroke-width: 2; }

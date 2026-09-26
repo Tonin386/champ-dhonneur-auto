@@ -98,3 +98,31 @@ def test_api_tableau_et_partie(run):
     assert f["decor"]["entetes"]["Iteration"] == "2" and len(f["images"]) > 10
     assert c.get("/api/entrainements/essai/parties/..%2Fconfig").status_code == 404
     assert c.get("/api/entrainements/inconnu").status_code == 404
+
+
+def test_lignee_une_seule_courbe(run):
+    """Un entraînement qui déclare son prédécesseur (predecesseur) montre les deux sur les mêmes
+    courbes, itérations numérotées à la suite, avec une séparation ; le prédécesseur n'est plus
+    proposé seul."""
+    d = run.parent / "suite"
+    (d / "parties").mkdir(parents=True)
+    (d / "config.json").write_text(json.dumps({"iterations": 0, "modele": {"d": 64, "couches": 2},
+                                               "predecesseur": {"dossier": "runs/essai", "libelle": "Règles v2"}}))
+    (d / "etat.json").write_text(json.dumps({"iteration": 1, "meilleur": "iter_0001"}))
+    ligne = {"iteration": 1, "exemples": 5, "fenetre": 5,
+             "autojeu": {"parties": 2, "nulles": 0, "manches": 20, "victoires_blanc": 1, "parties_par_heure": 800},
+             "apprentissage": {"pas": 1}, "validation": {}, "temps": {"autojeu": 3, "apprentissage": 1},
+             "evaluation": {"elo": 40.0, "meilleur": "iter_0001", "matchs": {"glouton": {"score": 0.7}}}}
+    (d / "journal.jsonl").write_text(json.dumps(ligne) + "\n")
+    (run / "unites.jsonl").write_text(json.dumps({"iteration": 2, "unites": {}}) + "\n")
+    (d / "unites.jsonl").write_text(json.dumps({"iteration": 1, "unites": {}}) + "\n")
+    c = TestClient(app)
+    assert [r["nom"] for r in c.get("/api/entrainements").json()["entrainements"]] == ["suite"]
+    t = c.get("/api/entrainements/suite").json()
+    assert t["series"]["iteration"] == [2, 3]
+    assert [p["iteration"] for p in t["courbe"]] == [2, 3] and t["courbe"][1]["elo"] == 40.0
+    assert t["separations"] == [{"iteration": 2.5, "libelle": "Règles v2"}]
+    assert t["iteration"] == 3 and t["iteration_run"] == 1
+    assert t["totaux"] == {"parties": 6, "secondes": 11}
+    u = c.get("/api/entrainements/suite/unites").json()
+    assert [m["iteration"] for m in u["historique"]] == [2, 3] and u["separations"] == t["separations"]

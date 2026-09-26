@@ -217,8 +217,65 @@ def _parties(d: Path, n: int) -> list[dict]:
     return out
 
 
+def _predecesseur(d: Path) -> tuple[Path, str] | None:
+    """Entraînement précédent déclaré dans la configuration (`predecesseur`), s'il existe."""
+    p = _lire_json(d / "config.json", {}).get("predecesseur") or {}
+    nom = p.get("dossier", "")
+    nom = nom.rsplit("/", 1)[-1]
+    if not nom or not re.fullmatch(r"[\w.-]+", nom) or not (RUNS / nom / "config.json").exists():
+        return None
+    return RUNS / nom, p.get("libelle") or nom
+
+
+def _lignee(d: Path) -> list[tuple[Path, str | None]]:
+    """Entraînements de la lignée, du plus ancien à `d` : (dossier, libellé de la séparation qui
+    le précède, None pour le premier)."""
+    out: list[tuple[Path, str | None]] = []
+    vus = set()
+    cur: Path | None = d
+    while cur is not None and cur.resolve() not in vus:
+        vus.add(cur.resolve())
+        p = _predecesseur(cur)
+        out.append((cur, p[1] if p else None))
+        cur = p[0] if p else None
+    out.reverse()
+    return out
+
+
+def _derniere_iteration(d: Path) -> int:
+    lignes = _journal(d)
+    return max((l.get("iteration") or 0 for l in lignes), default=0) or _lire_json(d / "etat.json", {}).get("iteration", 0)
+
+
 def tableau(d: Path, parties: int = 150) -> dict:
-    """Tableau de bord : état, séries par itération (colonnes), courbe d'Elo, parties."""
+    """Tableau de bord : état, séries par itération (colonnes), courbe d'Elo, parties. Les
+    entraînements précédents de la lignée (`predecesseur`) sont enchaînés avant celui-ci, itérations
+    numérotées à la suite, avec une séparation à chaque changement (`separations`)."""
+    lignee = _lignee(d)
+    if len(lignee) > 1:
+        t = _tableau_seul(d, parties)
+        cols = {k: [] for k in t["series"]}
+        courbe, separations, base, tot_p, tot_s = [], [], 0, 0, 0
+        for k, (dk, libelle) in enumerate(lignee):
+            tk = t if dk == d else _tableau_seul(dk, 0)
+            if libelle is not None:
+                separations.append({"iteration": base + 0.5, "libelle": libelle})
+            for c, v in tk["series"].items():
+                cols.setdefault(c, []).extend((x + base) if c == "iteration" and x is not None else x for x in v)
+            courbe += [dict(p, iteration=p["iteration"] + base) for p in tk["courbe"]]
+            tot_p += tk["totaux"]["parties"]
+            tot_s += tk["totaux"]["secondes"]
+            if dk != d:
+                base += _derniere_iteration(dk)
+        t.update(series=cols, courbe=courbe, separations=separations, iteration_run=t["iteration"],
+                 iteration=base + t["iteration"], totaux={"parties": tot_p, "secondes": tot_s})
+        return t
+    t = _tableau_seul(d, parties)
+    t.update(separations=[], iteration_run=t["iteration"])
+    return t
+
+
+def _tableau_seul(d: Path, parties: int = 150) -> dict:
     cfg = _lire_json(d / "config.json", {})
     etat = _lire_json(d / "etat.json", {})
     elo = _lire_json(d / "elo.json", {}).get("elo", {})
@@ -277,14 +334,21 @@ def _signature(d: Path) -> tuple:
 
 def unites(d: Path) -> dict:
     """Valeur dynamique des unités à chaque itération (unites.jsonl, écrit par ia/valeurs.py) et
-    bilan des drafts de l'auto-jeu (journal.jsonl : victoires du premier à choisir)."""
-    draft = []
-    for l in _journal(d):
-        st = l.get("autojeu", {})
-        if st.get("parties_draft"):
-            draft.append({"iteration": l.get("iteration"), "parties_draft": st["parties_draft"],
-                          "victoires_choisit": st.get("victoires_choisit", 0)})
-    return {"historique": _journal(d, "unites.jsonl"), "draft": draft}
+    bilan des drafts de l'auto-jeu (journal.jsonl : victoires du premier à choisir), lignée comprise
+    (itérations numérotées à la suite, `separations` comme pour le tableau de bord)."""
+    historique, draft, separations, base = [], [], [], 0
+    for dk, libelle in _lignee(d):
+        if libelle is not None:
+            separations.append({"iteration": base + 0.5, "libelle": libelle})
+        for l in _journal(dk):
+            st = l.get("autojeu", {})
+            if st.get("parties_draft"):
+                draft.append({"iteration": (l.get("iteration") or 0) + base, "parties_draft": st["parties_draft"],
+                              "victoires_choisit": st.get("victoires_choisit", 0)})
+        historique += [dict(m, iteration=(m.get("iteration") or 0) + base) for m in _journal(dk, "unites.jsonl")]
+        if dk != d:
+            base += _derniere_iteration(dk)
+    return {"historique": historique, "draft": draft, "separations": separations}
 
 
 # ------------------------------------------------------------------ rediffusions
@@ -385,8 +449,11 @@ def _evenement(nom: str, data) -> str:
 def entrainements():
     out = []
     if RUNS.is_dir():
-        for d in RUNS.iterdir():
-            if not (d / "config.json").exists():
+        dossiers = [d for d in RUNS.iterdir() if (d / "config.json").exists()]
+        # un entraînement repris par un autre (predecesseur) est montré sur les courbes de celui-ci
+        anciens = {p[0].name for d in dossiers if (p := _predecesseur(d))}
+        for d in dossiers:
+            if d.name in anciens:
                 continue
             etat = _lire_json(d / "etat.json", {})
             out.append({"nom": d.name, "iteration": etat.get("iteration", 0),

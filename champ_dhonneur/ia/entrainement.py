@@ -104,6 +104,9 @@ class ConfigEntrainement:
     # meilleur démontré, comme AlphaGo Zero : avec eval_promotion "ic", un réseau n'est promu que
     # si sa supériorité est établie ; l'apprentissage continue sur le dernier réseau)
     autojeu_reseau: str = "dernier"
+    # entraînement précédent affiché avant celui-ci par le spectateur, sur les mêmes courbes, avec une
+    # ligne de séparation : {"dossier": "continu_regles_v1", "libelle": "Règles des cartes v2"}
+    predecesseur: dict = field(default_factory=dict)
     travailleurs_evaluation: int = 0 # processus pour les évaluations (0 = travailleurs)
     purger_donnees: bool = True      # supprimer les fichiers d'exemples sortis de la fenêtre
     purger_modeles: bool = True      # ne garder que les modèles évalués (tous les eval_tous)

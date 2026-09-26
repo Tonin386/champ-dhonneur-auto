@@ -94,13 +94,12 @@ function Kpi({ label, valeur, detail }: { label: string; valeur: React.ReactNode
 }
 
 export function Barre() {
-  const runs = useStore(s => s.runs);
   const run = useStore(s => s.run);
   const t = useStore(s => s.tableau);
   const connecte = useStore(s => s.connecte);
   const vue = useStore(s => s.vue);
   const regie = useStore(s => s.regie);
-  const { choisirRun, setVue, basculerRegie } = useStore.getState();
+  const { setVue, basculerRegie } = useStore.getState();
   const pph = t?.series.parties_par_heure.at(-1);
   const elo = t?.elo_meilleur;
   return (
@@ -109,13 +108,7 @@ export function Barre() {
         <img src="/img/embleme.png" alt="" />
         <div>
           <h1>Champ d'honneur</h1>
-          {runs.length > 1 ? (
-            <select value={run ?? ""} onChange={e => choisirRun(e.target.value)} aria-label="Entraînement suivi">
-              {runs.map(r => <option key={r.nom} value={r.nom}>{r.nom} (it. {r.iteration})</option>)}
-            </select>
-          ) : (
-            <div className="sous">Entraînement {run ?? "—"}</div>
-          )}
+          <div className="sous">Entraînement {run ?? "—"}</div>
         </div>
       </div>
       <Phase />

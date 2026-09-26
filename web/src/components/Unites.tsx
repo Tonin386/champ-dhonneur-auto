@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { NOMS, imgPiece } from "../jeu";
-import type { MesureUnites, Unites } from "../types";
+import type { MesureUnites, Separation, Unites } from "../types";
 
 // Vue « Unités » : valeur dynamique des unités mesurée à chaque itération (ia/valeurs.py),
 // en points du scoreur (10 = un bastion d'avance).
@@ -96,8 +96,9 @@ function TableValeurs({ m, ordre, hist, sel, unite, setUnite }: {
   );
 }
 
-function Evolution({ hist, ordre, sel, setSel, unite }: {
+function Evolution({ hist, ordre, sel, setSel, unite, separations }: {
   hist: MesureUnites[]; ordre: string[]; sel: number; setSel: (k: number) => void; unite: string | null;
+  separations?: Separation[];
 }) {
   const [survol, setSurvol] = useState<number | null>(null);
   const w = 600, h = 220, gx = 34, gy = 10, bas = 18;
@@ -136,6 +137,19 @@ function Evolution({ hist, ordre, sel, setSel, unite }: {
         <polyline className="choisie" points={ligne(lu)} />
         <circle className="point" cx={X(n - 1)} cy={Y(hist[n - 1].unites[lu].points)} r={4} />
         <text className="etiquette" x={X(n - 1) + 7} y={Y(hist[n - 1].unites[lu].points) + 4}>{lu}</text>
+        {(separations ?? []).map(sp => {
+          // entre la dernière mesure avant la séparation et la première après
+          const j = hist.findIndex(m => m.iteration > sp.iteration);
+          if (j === 0 || !n) return null;
+          // aucune mesure après la séparation (nouvel entraînement pas encore commencé) : bord droit
+          const x = j < 0 ? Math.min(X(n - 1) + 10, w - 26) : (X(j - 1) + X(j)) / 2;
+          return (
+            <g key={sp.iteration} className="separation">
+              <line x1={x} x2={x} y1={gy} y2={h - bas} />
+              <text x={x + 3} y={gy + 8}>{sp.libelle}</text>
+            </g>
+          );
+        })}
         <line className="curseur" x1={X(k)} x2={X(k)} y1={gy} y2={h - bas} />
         <text className="borne" x={gx} y={h - 4}>it. {hist[0].iteration}</text>
         <text className="borne" x={w - 24} y={h - 4} textAnchor="end">it. {hist[n - 1].iteration}</text>
@@ -265,7 +279,8 @@ export function VueUnites({ run, maj }: { run: string; maj: number | null }) {
       </div>
       <section className="panneau p-evolution">
         <h2>Évolution {unite ? `· ${NOMS[unite]}` : `· ${NOMS[ordre[0]]}`}<span className="it">bande : IC 95 %</span></h2>
-        <Evolution hist={hist} ordre={ordre} sel={sel} setSel={k => setChoix(k === hist.length - 1 ? null : k)} unite={unite} />
+        <Evolution hist={hist} ordre={ordre} sel={sel} setSel={k => setChoix(k === hist.length - 1 ? null : k)} unite={unite}
+          separations={data.separations} />
       </section>
       <section className="panneau p-chaleur">
         <Chaleur titre="Synergies entre alliés" ordre={ordre} unite={unite} valeur={(u, w) => paire(m.synergies, u, w)}

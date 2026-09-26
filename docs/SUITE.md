@@ -1,8 +1,13 @@
 # État au 27/09/2026 et suite
 
 ## Nouveau départ : règles des cartes v2 (27/09/2026)
-- Règles corrigées (commit « Règles des cartes v2 ») : Moine soldat une fois par tour, Fantassin
-  recruté déployable aussitôt. Les données et réseaux antérieurs suivaient les anciennes règles.
+- **Pour lancer demain** : `make continu` (ou `docker compose --profile continu up -d`). Le run est prêt
+  à l'itération 0 et n'a pas été lancé.
+- Règles corrigées : Moine soldat une fois par tour, Fantassin recruté déployable aussitôt, Berserk
+  (après une attaque ou un déplacement, attaquer ou se déplacer à nouveau ; plus de contrôle). Les
+  données et réseaux antérieurs suivaient les anciennes règles.
+- Spectateur : l'ancien et le nouvel entraînement sur les mêmes courbes (et l'onglet Unités), ligne
+  verticale « Règles des cartes v2 » ; réglage `predecesseur` du profil ; plus de menu de choix.
 - Ancien entraînement archivé tel quel : `runs/continu_regles_v1` (meilleur : iter_0234, copié en
   `runs/ancres/regles_v1_0234.pt`).
 - `runs/continu` repart de l'itération 0 : réseau appris initialisé au hasard, fenêtre vide. L'auto-jeu
