@@ -26,7 +26,7 @@ code à modifier.
 | | Unité | Pièces | Tactique / capacité |
 |---|---|---|---|
 | A | Archer | 4 | Attaque à exactement 2 cases, case intermédiaire libre ou non. N'attaque qu'ainsi. |
-| B | Berserk | 5 | Après une manœuvre, peut défausser (face visible) une pièce de sa pile pour manœuvrer à nouveau, tant qu'il lui reste au moins 2 pièces. |
+| B | Berserk | 5 | Après une attaque ou un déplacement, peut défausser (face visible) une pièce de sa pile pour attaquer ou se déplacer à nouveau, plusieurs fois, sans retirer sa dernière pièce (carte v2). |
 | C | Cavalerie | 4 | Se déplace d'une case puis attaque. |
 | D | Porte étendard | 5 | Déplace d'une case une unité alliée à ≤ 2 cases ; elle finit à ≤ 2 cases du Porte étendard. |
 | E | Éclaireur | 5 | Peut être déployé sur toute case libre adjacente à une unité alliée. |
@@ -63,7 +63,9 @@ Total : 74 pièces, conforme au matériel.
     → `engine._pending_actions`, `moteur.rs actions_attente`
 8. **Garde royale** : la défense par la réserve est un choix du défenseur (décision intercalée).
 9. **Piquier** : pas de riposte contre les tirs à 2 cases (Archer, Arbalétrier).
-10. **Berserk** : ses manœuvres supplémentaires sont déplacer, contrôler ou attaquer.
+10. **Berserk (carte v2)** : la capacité se déclenche après une attaque ou un déplacement (pas après un
+    contrôle), et ses manœuvres supplémentaires sont attaquer ou se déplacer (pas contrôler).
+    → `engine._trigger`, `engine._pending_actions`, `moteur.rs declencher`, `actions_attente`
 11. **Garde royale (tactique)** : texte de la carte française, « de 1 ou 2 cases vers un Lieu que vous
     contrôlez » ; le chemin peut bifurquer (interprétation courante) mais la case intermédiaire doit être libre.
 12. **Mise en place avancée** (`Game(units="draft")`) : 8 cartes tirées au hasard, choix un par un

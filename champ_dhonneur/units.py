@@ -26,8 +26,8 @@ UNITS: dict[str, UnitDef] = {u.letter: u for u in [
             "Attaque une unité à 2 cases, non adjacente (la case intermédiaire peut être occupée).",
             "(x) N'attaque qu'avec sa tactique.", normal_attack=False),
     UnitDef("B", "Berserk", 5, "",
-            "(!) Après chaque manœuvre, peut défausser une pièce de sa pile pour manœuvrer à nouveau, "
-            "autant de fois que voulu, sans retirer sa dernière pièce."),
+            "(!) Après une attaque ou un déplacement, peut défausser une pièce de sa pile pour attaquer "
+            "ou se déplacer à nouveau, autant de fois que voulu, sans retirer sa dernière pièce."),
     UnitDef("C", "Cavalerie", 4, "Se déplace puis attaque."),
     UnitDef("D", "Porte étendard", 5,
             "Déplace d'une case une unité alliée à 2 cases ou moins ; elle doit finir à 2 cases ou moins du Porte étendard."),

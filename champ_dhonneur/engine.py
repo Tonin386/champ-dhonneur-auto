@@ -469,8 +469,9 @@ class Game:
         if k == "priest":
             return self._coin_actions(pd.player, pd.coin)
         skip = [Action(SKIP)]
-        if k == "berserk":   # la pièce est défaussée de la pile avant la manœuvre
-            return skip + self._maneuvers(pd.player, pd.pos, None, paid=1)
+        if k == "berserk":   # la pièce est défaussée de la pile avant la manœuvre ;
+            # carte v2 : attaquer ou se déplacer à nouveau (pas de contrôle)
+            return skip + [a for a in self._maneuvers(pd.player, pd.pos, None, paid=1) if a.kind != CONTROL]
         if k == "merc":
             return skip + self._maneuvers(pd.player, pd.pos, None)
         if k == "soldat":
@@ -598,7 +599,8 @@ class Game:
         if unit is None:
             return
         if unit.utype == "B":
-            self.pending.append(Pending("berserk", unit.owner, pos))
+            if kind in (ATTACK, MOVE):     # carte v2 : après une attaque ou un déplacement
+                self.pending.append(Pending("berserk", unit.owner, pos))
         elif unit.utype == "S" and kind == ATTACK:
             self.pending.append(Pending("soldat", unit.owner, pos))
         elif unit.utype == "R" and kind in (ATTACK, CONTROL) and not self.priest_used:

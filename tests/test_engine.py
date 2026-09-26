@@ -158,6 +158,29 @@ def test_berserk_chain_and_soldier_move():
     assert g.board[g.spec.index["d4"]].coins == 1
 
 
+def test_berserk_v2_attaque_ou_deplacement():
+    """Carte v2 : la capacité du Berserk se déclenche après une attaque ou un déplacement (pas après un
+    contrôle), et sa manœuvre supplémentaire est une attaque ou un déplacement (pas un contrôle)."""
+    g = empty_game([["B", "S", "X", "H"], ["A", "C", "L", "E"]])
+    b1 = g.spec.index["b1"]
+    g.control[b1] = None
+    g.markers_left[0] += 1
+    voisin = next(c for c in g.spec.neighbors[b1] if c not in g.board)
+    put(g, g.spec.names[voisin], 0, "B", 3)
+    with_hand(g, 0, ["B"])
+    g.apply(Action("move", "B", "B", (voisin, b1)))          # déplacement : manœuvre supplémentaire
+    assert g.pending and g.pending[-1].kind == "berserk"
+    assert all(a.kind != "control" for a in g.legal_actions())   # le Lieu libre ne peut pas être contrôlé
+    assert any(a.kind == "move" for a in g.legal_actions())
+    g2 = empty_game([["B", "S", "X", "H"], ["A", "C", "L", "E"]])
+    g2.control[b1] = None
+    g2.markers_left[0] += 1
+    put(g2, "b1", 0, "B", 3)
+    with_hand(g2, 0, ["B"])
+    g2.apply(Action("control", "B", "B", (b1,)))             # contrôle : pas de manœuvre supplémentaire
+    assert not any(pd.kind == "berserk" for pd in g2.pending)
+
+
 def test_warrior_priest_draws():
     g = empty_game([["R", "S", "X", "H"], ["A", "C", "L", "E"]])
     put(g, "b1", 0, "R")

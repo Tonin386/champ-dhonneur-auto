@@ -122,6 +122,13 @@ def test_fantassin_deploiement_immediat():
     assert n > 0
 
 
+def test_berserk_carte_v2():
+    # carte v2 : déclenchement après une attaque ou un déplacement, sans contrôle, dans les deux moteurs
+    for armees in (["BSXH", "ACLE"], ["BRKN", "BDGP"]):
+        for seed in range(40):
+            rejouer(seed, [list(u) for u in armees], premier=seed % 2, strategie="agressive", encoder_tous=3)
+
+
 def test_moine_soldat_une_fois_par_tour():
     # carte v2 : même blocage du second déclenchement dans les deux moteurs
     # (12 déclenchements bloqués dans ces parties)

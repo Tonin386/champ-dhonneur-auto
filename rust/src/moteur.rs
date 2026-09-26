@@ -877,7 +877,19 @@ impl Partie {
                 out.push(Action::simple(SKIP, 0));
                 // Berserk : la pièce est défaussée de la pile avant la manœuvre
                 let paye = if pd.genre == ATT_BERSERK { 1 } else { 0 };
+                let debut = out.len();
                 self.manoeuvres(pd.joueur, pd.pos as u8, 0, false, paye, out);
+                if pd.genre == ATT_BERSERK {
+                    // carte v2 : attaquer ou se déplacer à nouveau (pas de contrôle), ordre conservé
+                    let mut i = debut;
+                    while i < out.len() {
+                        if out[i].genre == CONTROL {
+                            out.remove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
             }
             ATT_SOLDAT => {
                 out.push(Action::simple(SKIP, 0));
@@ -1047,7 +1059,10 @@ impl Partie {
             return;
         }
         if c.genre == U_B {
-            self.empiler(Attente::new(ATT_BERSERK, c.proprio, pos as i8));
+            if genre == ATTACK || genre == MOVE {
+                // carte v2 : après une attaque ou un déplacement
+                self.empiler(Attente::new(ATT_BERSERK, c.proprio, pos as i8));
+            }
         } else if c.genre == U_S && genre == ATTACK {
             self.empiler(Attente::new(ATT_SOLDAT, c.proprio, pos as i8));
         } else if c.genre == U_R && (genre == ATTACK || genre == CONTROL) && !self.e.moine_utilise {
