@@ -225,3 +225,178 @@ def test_draft_encodage_invariant():
         e = j.etat()
         k = champ_rs.Jeu(seed, e["unites"], e["premier"])
         assert j.encoder() == k.encoder()
+
+
+@pytest.mark.parametrize("draft", [False, True])
+def test_match_rust_apparie(draft):
+    """Chaque graine est jouée deux fois (agents échangés), reproductible, relevés rejouables par
+    le moteur Python ; les agents peuvent avoir des recherches différentes ; un même évaluateur
+    pour deux agents (lot fusionné) ne change rien ; arrêt anticipé possible."""
+    from champ_dhonneur.notation import import_record, parse_headers
+    ev = rs.EvaluateurLotUniforme()
+    agents = [{"simulations": 8, "m": 8}, {"simulations": 4, "m": 4, "cle_publique": False}]
+    parties = [p for g in (11, 12, 13) for p in ((g, 0, 1), (g, 1, 0))]
+    r1 = rs.jouer_match_rs([ev, ev], agents, parties, draft=draft, max_manches=25, releves=2,
+                           simultanees=3)
+    r2 = rs.jouer_match_rs([ev, rs.EvaluateurLotUniforme()], agents, parties, draft=draft,
+                           max_manches=25, simultanees=6)
+    assert len(r1["parties"]) == 6
+    assert sorted(r1["parties"]) == sorted(r2["parties"])
+    assert sorted((g, a, b) for g, a, b, *_ in r1["parties"]) == sorted(parties)
+    assert all(s in (-1, 0, 1) for *_, s, _ in r1["parties"])
+    assert all(e > 0 for e in r1["evaluations"])
+    assert len(r1["releves"]) == 2
+    for t in r1["releves"]:
+        g = import_record(t)
+        assert g.done and g.result_label() == parse_headers(t)["Resultat"]
+    r3 = rs.jouer_match_rs([ev, ev], agents, parties, draft=draft, max_manches=25, simultanees=2,
+                           arret=lambda finies: len(finies) >= 2)
+    assert 2 <= len(r3["parties"]) < 6
+
+
+def test_autojeu_rust_continu():
+    """Auto-jeu continu : chaque appel renvoie au moins `parties` parties terminées ; les parties
+    en cours continuent à l'appel suivant (même auto-jeu, lots toujours pleins)."""
+    from champ_dhonneur.ia.autojeu import ParamsAutoJeu
+    P = ParamsAutoJeu(parties=4, simultanees=6, simulations=8, simulations_rapides=4, max_manches=20,
+                      meilleur_coup=True, continu=True)
+    rs._CONTINU.clear()
+    d1, s1 = rs.jouer_parties_rs(rs.EvaluateurLotUniforme(), P, seed=5)
+    aj = next(iter(rs._CONTINU.values()))[0]
+    d2, s2 = rs.jouer_parties_rs(rs.EvaluateurLotUniforme(), P, seed=6)
+    assert next(iter(rs._CONTINU.values()))[0] is aj
+    assert s1["parties"] >= 4 and s2["parties"] >= 4
+    assert len(d1["z"]) > 0 and len(d2["z"]) > 0
+    assert np.allclose(d2["pi"].astype(np.float32).sum(1), 1, atol=1e-2)
+    rs._CONTINU.clear()
+
+
+def test_tournoi_et_evaluations_rust(tmp_path):
+    """Tournoi (réseaux en un seul match Rust, bots en Python), matchs contre plusieurs réseaux
+    et test séquentiel, avec de petits réseaux sur CPU."""
+    torch = pytest.importorskip("torch")
+    from champ_dhonneur.ia.evaluation import matchs_contre, sprt_reseaux, tournoi
+    from champ_dhonneur.ia.modele import ConfigModele, ReseauChamp, sauver
+    for k in range(2):
+        torch.manual_seed(k)
+        sauver(tmp_path / f"m{k}.pt", ReseauChamp(ConfigModele(d=16, couches=1, tetes=2)))
+    a, b = str(tmp_path / "m0.pt"), str(tmp_path / "m1.pt")
+    r = tournoi([a, b, f"{a}:simulations=4", "aleatoire"], paires=2, simulations=8,
+                dispositif="cpu", compiler=False)
+    assert r["noms"] == ["m0", "m1", "m0@simulations=4", "aleatoire"]
+    assert len(r["matchs"]) == 6 and all(m["parties"] == 4 for m in r["matchs"].values())
+    assert set(r["elo"]) == set(r["noms"])
+    res = matchs_contre(a, [(b, {}, "m1"), (a, {"simulations": 4}, "m0bis")], paires=2, simulations=8,
+                        dispositif="cpu", compiler=False, releves=1, nom="m0")
+    assert set(res) == {"m1", "m0bis"} and all(x["parties"] == 4 for x in res.values())
+    assert all(len(x["releves"]) <= 1 for x in res.values())
+    s = sprt_reseaux(a, b, max_paires=3, simulations=4, dispositif="cpu", compiler=False)
+    assert s["decision"] in ("H0", "H1", "indécis") and s["paires"] <= 3
+
+
+@pytest.mark.parametrize("draft", [False, True])
+def test_etat_python_vers_rust(draft):
+    """Une partie du moteur Python reconstruite dans le moteur Rust (Jeu.depuis_etat) : même état,
+    même encodage, mêmes actions légales dans le même ordre, à tout moment de la partie."""
+    rng = random.Random(3)
+    vues = 0
+    for graine in range(25):
+        g = Game("2J", "draft" if draft else None, seed=graine)
+        for _ in range(rng.randrange(0, 150)):
+            if g.done:
+                break
+            g.apply(rng.choice(g.legal_actions()))
+        j = champ_rs.Jeu.depuis_etat(rs.etat_jeu(g), 150, graine)
+        assert etat_rust(j) == etat_python(g)
+        if not g.done:
+            comparer_encodage(g, j)
+            assert [rs.action_python(a) for a in j.legales()] == g.legal_actions()
+            vues += 1
+    assert vues > 10
+
+
+def test_recherche_rust_sur_une_position():
+    """La recherche Rust sur une position du moteur Python renvoie un coup légal et un résultat
+    au format de la recherche Python ; un coup gagnant est trouvé."""
+    from champ_dhonneur.ia.recherche import Resultat
+    ev = rs.EvaluateurLotUniforme()
+    rng = random.Random(1)
+    for graine in range(6):
+        g = Game("2J", "draft" if graine % 2 else None, seed=graine)
+        for _ in range(rng.randrange(0, 60)):
+            if g.done:
+                break
+            g.apply(rng.choice(g.legal_actions()))
+        if g.done or len(g.legal_actions()) < 2:
+            continue
+        r = rs.rechercher(g, ev, simulations=32, agent={"parallele": 4}, graine=graine)
+        assert isinstance(r, Resultat) and r.action in g.legal_actions()
+        assert r.legal == g.legal_actions() and abs(float(r.politique.sum()) - 1) < 1e-3
+        assert r.simulations == 32
+
+
+def test_draft_exact_autojeu_et_match():
+    """Choix de carte exact (draft_exact) : exemples de draft valides en auto-jeu, et un agent qui
+    l'utilise peut affronter un agent à recherche Gumbel."""
+    from champ_dhonneur.ia.autojeu import ParamsAutoJeu
+    P = ParamsAutoJeu(parties=4, simultanees=4, simulations=8, simulations_rapides=4, max_manches=20,
+                      p_draft=1.0, draft_exact=2, meilleur_coup=True)
+    data, st = rs.jouer_parties_rs(rs.EvaluateurLotUniforme(), P, seed=2)
+    assert st["parties_draft"] == 4
+    d = data["glob_i"][:, 0] == PENDING_ID["draft"]
+    assert d.sum() >= 4 * 6
+    assert np.allclose(data["pi"][d].astype(np.float32).sum(1), 1, atol=1e-2)
+    ev = rs.EvaluateurLotUniforme()
+    r = rs.jouer_match_rs([ev, ev], [{"simulations": 8, "draft_exact": 2}, {"simulations": 8}],
+                          [(5, 0, 1), (5, 1, 0)], draft=True, max_manches=20)
+    assert len(r["parties"]) == 2
+
+
+def test_recherche_rust_progressive():
+    """Recherche progressive Rust : passes successives sur le même arbre (simulations cumulées),
+    lignes principales exportées ; au temps, au moins une passe."""
+    ev = rs.EvaluateurLotUniforme()
+    g = Game(seed=4)
+    rng = random.Random(4)
+    for _ in range(40):
+        g.apply(rng.choice(g.legal_actions()))
+    while g.pending or len(g.legal_actions()) < 3:
+        g.apply(g.legal_actions()[0])
+    r = rs.recherche_jeu(g, 64, {"parallele": 4}, 1)
+    rs._conduire(r, ev, r.etape())
+    assert r.resultat()[-1] == 64
+    rs._conduire(r, ev, r.prolonger(128, 8))
+    assert r.resultat()[-1] == 64 + 128
+    lignes = r.lignes(6)
+    assert len(lignes) == len(g.legal_actions()) and any(lignes)
+    res = rs.rechercher_temps(g, ev, 0.5, {"parallele": 4})
+    assert res.action in g.legal_actions() and res.infos["passes"] >= 1
+
+
+def test_analyse_avec_la_recherche_rust(tmp_path):
+    """Analyse progressive avec la recherche Rust : profondeur atteinte, lignes de jeu jouables,
+    suivi des passes intermédiaires, arrêt sur demande."""
+    pytest.importorskip("torch")
+    import threading
+
+    from champ_dhonneur.ia.analyse import analyser, bot_analyse
+    from champ_dhonneur.ia.modele import ConfigModele, ReseauChamp, sauver
+    from champ_dhonneur.ia.recherche import Limite
+    sauver(tmp_path / "m.pt", ReseauChamp(ConfigModele(d=16, couches=1, tetes=2)))
+    bot = bot_analyse(64, str(tmp_path / "m.pt"), "cpu")
+    assert bot.rust
+    g = Game(seed=6)
+    rng = random.Random(6)
+    for _ in range(30):
+        g.apply(rng.choice(g.legal_actions()))
+    while g.pending or len(g.legal_actions()) < 3:
+        g.apply(g.legal_actions()[0])
+    vues = []
+    a = analyser(g, bot, limite=Limite(profondeur=3), suivi=vues.append)
+    assert a["profondeur"] == 3 and len(vues) == 2 and all(v["en_cours"] for v in vues)
+    assert a["coups"] and all(isinstance(c["ligne"], list) and c["ligne"] for c in a["coups"])
+    assert a["coups"][0]["action"] in g.legal_actions()
+    arret = threading.Event()
+    arret.set()
+    b = analyser(g, bot, limite=Limite(arret=arret))
+    assert b["coups"] and not b["en_cours"]

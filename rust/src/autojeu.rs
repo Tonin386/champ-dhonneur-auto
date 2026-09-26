@@ -4,7 +4,8 @@
 use crate::encodage::*;
 use crate::moteur::{Action, Partie, N_TYPES};
 use crate::plateau::{plateau, AUCUNE_CASE, N_CASES};
-use crate::recherche::{ParamsRecherche, Recherche, Requete};
+use crate::draft::Moteur;
+use crate::recherche::{ParamsRecherche, Requete};
 use crate::rng::Rapide;
 
 pub const A_MAX: usize = 64;
@@ -31,6 +32,8 @@ pub struct ParamsAutoJeu {
     /// politique), les recherches rapides n'en ont pas ; la valeur de recherche des exemples est
     /// celle du coup joué
     pub meilleur_coup: bool,
+    /// > 0 : choix de carte exact pendant le draft (voir `draft.rs`), avec ce nombre de tirages
+    pub draft_exact: usize,
 }
 
 struct Exemple {
@@ -47,7 +50,7 @@ struct Emplacement {
     jeu: Partie,
     graine: u64,
     exemples: Vec<Exemple>,
-    recherche: Option<Recherche>,
+    recherche: Option<Moteur>,
     complet: bool,
     journal: Vec<Action>,
     requetes: Vec<Requete>,
@@ -90,6 +93,8 @@ pub struct Donnees {
     pub lieux: Vec<i8>,
     pub marge: Vec<i8>,
     pub main_adv: Vec<i8>,
+    /// 1 au premier exemple de chaque partie (les exemples d'une partie sont contigus, dans l'ordre)
+    pub debut: Vec<i8>,
 }
 
 /// Lot de positions à évaluer, à plat (entiers i64, flottants f32).
@@ -176,6 +181,7 @@ impl AutoJeu {
             parallele: self.p.parallele,
             bruit_coup: !meilleur,
             coup_gagnant: meilleur,
+            draft_exact: self.p.draft_exact,
             ..ParamsRecherche::default()
         }
     }
@@ -265,7 +271,7 @@ impl AutoJeu {
             let params = self.params_recherche(sims, complet);
             let graine = self.rng.next_u64();
             let e = &mut self.emplacements[i];
-            let (r, reqs) = Recherche::nouvelle(&e.jeu, sims, params, graine);
+            let (r, reqs) = Moteur::nouvelle(&e.jeu, sims, params, graine);
             e.complet = complet;
             e.recherche = Some(r);
             e.requetes = reqs;
@@ -277,7 +283,7 @@ impl AutoJeu {
 
     fn fin_recherche(&mut self, i: usize) {
         let e = &mut self.emplacements[i];
-        let res = e.recherche.take().unwrap().resultat.unwrap();
+        let res = e.recherche.take().unwrap().prendre_resultat().unwrap();
         if e.complet {
             // valeur de recherche : celle du coup joué (meilleur_coup), sinon la moyenne de la racine
             let q = if self.p.meilleur_coup {
@@ -344,7 +350,7 @@ impl AutoJeu {
             _ => s.victoires_noir += 1,
         }
         let pl = plateau();
-        for ex in &e.exemples {
+        for (k, ex) in e.exemples.iter().enumerate() {
             let z = if g.e.gagnant < 0 { 0.0 } else if g.e.gagnant as u8 == ex.equipe { 1.0 } else { -1.0 };
             let t = ex.equipe;
             let mut lieux = [-1i8; N_CASES];
@@ -354,7 +360,7 @@ impl AutoJeu {
                 lieux[v] = if c < 0 { 0 } else if c as u8 == t { 1 } else { 2 };
             }
             let marge = (g.e.marqueurs[1 - t as usize] - g.e.marqueurs[t as usize]).clamp(-4, 4);
-            self.empaqueter(ex, z, &lieux, marge);
+            self.empaqueter(ex, z, &lieux, marge, k == 0);
         }
         // relevés tirés au hasard (réservoir) : les premières parties finies sont les plus courtes
         let r = Releve { graine: e.graine, actions: e.journal.clone(), resultat: g.resultat(), draft: g.e.draft };
@@ -368,9 +374,10 @@ impl AutoJeu {
         }
     }
 
-    fn empaqueter(&mut self, ex: &Exemple, z: f32, lieux: &[i8; N_CASES], marge: i8) {
+    fn empaqueter(&mut self, ex: &Exemple, z: f32, lieux: &[i8; N_CASES], marge: i8, debut: bool) {
         let d = &mut self.donnees;
         d.n += 1;
+        d.debut.push(debut as i8);
         d.lieux.extend_from_slice(lieux);
         d.marge.push(marge);
         d.main_adv.extend_from_slice(&ex.main_adv);
@@ -405,45 +412,47 @@ impl AutoJeu {
 
     fn assembler(&mut self) -> Lot {
         let mut lot_courant = Vec::new();
-        let mut b = 0;
-        let mut a_len = 1;
-        for (i, e) in self.emplacements.iter().enumerate() {
+        let mut groupes = Vec::new();
+        for (i, e) in self.emplacements.iter_mut().enumerate() {
             if !e.requetes.is_empty() {
                 lot_courant.push((i, e.requetes.len()));
-                b += e.requetes.len();
-                for r in &e.requetes {
-                    a_len = a_len.max(r.n_act);
-                }
-            }
-        }
-        let mut lot = Lot {
-            b,
-            a_len,
-            cell_i: Vec::with_capacity(b * N_CASES * CELL_I),
-            cell_f: Vec::with_capacity(b * N_CASES * CELL_F),
-            unit_i: Vec::with_capacity(b * N_UNITES * UNIT_I),
-            unit_f: Vec::with_capacity(b * N_UNITES * UNIT_F),
-            glob_i: Vec::with_capacity(b * GLOB_I),
-            glob_f: Vec::with_capacity(b * GLOB_F),
-            acts: Vec::with_capacity(b * a_len * ACT_F),
-            n_act: Vec::with_capacity(b),
-        };
-        for &(i, _) in &lot_courant {
-            for r in std::mem::take(&mut self.emplacements[i].requetes) {
-                lot.cell_i.extend_from_slice(&r.obs.cell_i);
-                lot.cell_f.extend_from_slice(&r.obs.cell_f);
-                lot.unit_i.extend_from_slice(&r.obs.unit_i);
-                lot.unit_f.extend_from_slice(&r.obs.unit_f);
-                lot.glob_i.extend_from_slice(&r.obs.glob_i);
-                lot.glob_f.extend_from_slice(&r.obs.glob_f);
-                lot.acts.extend_from_slice(&r.actions);
-                for _ in r.n_act..a_len {
-                    lot.acts.extend_from_slice(&[0, 0, 0, 0, AUCUNE_CASE as i64, AUCUNE_CASE as i64, AUCUNE_CASE as i64]);
-                }
-                lot.n_act.push(r.n_act as i64);
+                groupes.push(std::mem::take(&mut e.requetes));
             }
         }
         self.lot_courant = lot_courant;
-        lot
+        assembler_lot(groupes)
     }
+}
+
+/// Lot unique formé des requêtes de plusieurs recherches, dans l'ordre (actions complétées
+/// jusqu'au plus grand nombre d'actions légales du lot).
+pub fn assembler_lot(groupes: Vec<Vec<Requete>>) -> Lot {
+    let b: usize = groupes.iter().map(|g| g.len()).sum();
+    let a_len = groupes.iter().flatten().map(|r| r.n_act).max().unwrap_or(1).max(1);
+    let mut lot = Lot {
+        b,
+        a_len,
+        cell_i: Vec::with_capacity(b * N_CASES * CELL_I),
+        cell_f: Vec::with_capacity(b * N_CASES * CELL_F),
+        unit_i: Vec::with_capacity(b * N_UNITES * UNIT_I),
+        unit_f: Vec::with_capacity(b * N_UNITES * UNIT_F),
+        glob_i: Vec::with_capacity(b * GLOB_I),
+        glob_f: Vec::with_capacity(b * GLOB_F),
+        acts: Vec::with_capacity(b * a_len * ACT_F),
+        n_act: Vec::with_capacity(b),
+    };
+    for r in groupes.into_iter().flatten() {
+        lot.cell_i.extend_from_slice(&r.obs.cell_i);
+        lot.cell_f.extend_from_slice(&r.obs.cell_f);
+        lot.unit_i.extend_from_slice(&r.obs.unit_i);
+        lot.unit_f.extend_from_slice(&r.obs.unit_f);
+        lot.glob_i.extend_from_slice(&r.obs.glob_i);
+        lot.glob_f.extend_from_slice(&r.obs.glob_f);
+        lot.acts.extend_from_slice(&r.actions);
+        for _ in r.n_act..a_len {
+            lot.acts.extend_from_slice(&[0, 0, 0, 0, AUCUNE_CASE as i64, AUCUNE_CASE as i64, AUCUNE_CASE as i64]);
+        }
+        lot.n_act.push(r.n_act as i64);
+    }
+    lot
 }

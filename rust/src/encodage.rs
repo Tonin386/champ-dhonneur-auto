@@ -140,7 +140,7 @@ pub fn encoder_etat(g: &Partie) -> Observation {
     gf[16] = un(opp.sac.contains(ROYAL) || opp.main.contains(ROYAL) || opp.def_cachee.contains(ROYAL));
     gf[17] = un(opp.def_visible.contains(ROYAL));
     gf[18] = (g.e.manche.min(100)) as f32 / 50.0;
-    gf[19] = g.e.manche as f32 / g.e.max_manches as f32;
+    gf[19] = g.e.manche as f32 / 100.0; // constante fixe, comme en Python (voir encodage.py)
     gf[20] = un(g.e.courant == p);
     gf[21] = pl.lieux.iter().filter(|&&l| g.e.controle[l as usize] < 0).count() as f32 / 10.0;
     if g.e.en_draft {

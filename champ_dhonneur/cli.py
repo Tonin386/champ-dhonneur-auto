@@ -184,18 +184,67 @@ def cmd_train(args) -> None:
     if not args.config and precedent.exists():
         # reprise : on repart de la configuration enregistrée
         cfg = ConfigEntrainement.depuis_dict(json.loads(precedent.read_text(encoding="utf-8")))
+        if args.dossier:     # dossier copié d'un autre entraînement : ne pas écrire dans l'original
+            cfg.dossier = args.dossier
     cfg.appliquer(args.reglage or [])
     entrainer(cfg)
 
 
+def _reglages(liste: list[str] | None) -> dict:
+    import json
+    out = {}
+    for kv in liste or []:
+        k, _, v = kv.partition("=")
+        try:
+            out[k.strip()] = json.loads(v)
+        except ValueError:
+            out[k.strip()] = v
+    return out
+
+
+def _dispositif(d: str) -> str:
+    if d != "auto":
+        return d
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
+
 def cmd_evaluate(args) -> None:
-    from .ia.evaluation import ClassementElo, agent_depuis_spec, match, match_parallele
-    nom_a = Path(args.a).stem if args.a.endswith(".pt") else args.a
-    nom_b = Path(args.b).stem if args.b.endswith(".pt") else args.b
+    from .ia import rs
+    from .ia.evaluation import (ClassementElo, agent_depuis_spec, match, match_parallele, match_reseaux,
+                                nom_spec, spec_reseau, sprt_reseaux)
+    nom_a, nom_b = nom_spec(args.a), nom_spec(args.b)
     if nom_b == nom_a:
         nom_b += "'"
     sims_b = args.simulations_b or args.simulations
-    if args.travailleurs and args.travailleurs > 1:
+    ra, rb = spec_reseau(args.a), spec_reseau(args.b)
+    dispositif = _dispositif(args.dispositif)
+    rust = ra is not None and rb is not None and args.moteur != "python" and rs.disponible()
+    if args.moteur == "rust" and not rust:
+        raise SystemExit("moteur Rust : deux modèles .pt et le module champ_rs sont nécessaires")
+    if args.sprt and not rust:
+        raise SystemExit("--sprt : matchs entre deux modèles .pt avec le moteur Rust seulement")
+    if rust:
+        kw = dict(simulations=args.simulations, simulations_b=sims_b,
+                  agent_a={**ra[1], **_reglages(args.agent_a)}, agent_b={**rb[1], **_reglages(args.agent_b)},
+                  dispositif=dispositif, protocole=args.protocole, simultanees=args.simultanees or 1024,
+                  compiler=not args.sans_compiler, noms=(nom_a, nom_b))
+        if args.sprt:
+            elo0, elo1 = (float(x) for x in args.sprt.split(","))
+
+            def suivi(b):
+                print(f"  {b['paires']:5d} paires : score {b['score']:.3f}, Elo {b['elo']:+.0f} "
+                      f"[{b['elo_bas']:+.0f}, {b['elo_haut']:+.0f}], LLR {b['llr']:+.2f} "
+                      f"(bornes {b['bornes'][0]:+.2f} / {b['bornes'][1]:+.2f}), {b['secondes']:.0f} s", flush=True)
+            r = sprt_reseaux(ra[0], rb[0], elo0, elo1, tranche=args.paires, max_paires=args.max_paires,
+                             seed=args.graine, suivi=suivi, **kw)
+            print(f"SPRT [{elo0:+.0f}, {elo1:+.0f}] : {r['decision']}")
+        else:
+            r = match_reseaux(ra[0], rb[0], args.paires, args.graine, **kw)
+    elif args.travailleurs and args.travailleurs > 1:
         import multiprocessing as mp
         from concurrent.futures import ProcessPoolExecutor
 
@@ -203,22 +252,54 @@ def cmd_evaluate(args) -> None:
         with ProcessPoolExecutor(args.travailleurs, mp_context=mp.get_context("spawn"),
                                  initializer=_init_travailleur) as ex:
             r = match_parallele(args.a, args.b, args.paires, args.graine, ex, args.travailleurs,
-                                args.simulations, sims_b, args.dispositif, nom_a=nom_a, nom_b=nom_b,
+                                args.simulations, sims_b, dispositif, nom_a=nom_a, nom_b=nom_b,
                                 protocole=args.protocole)
     else:
-        a = agent_depuis_spec(args.a, args.simulations, args.dispositif, nom_a)
-        b = agent_depuis_spec(args.b, sims_b, args.dispositif, nom_b)
-        r = match(a, b, paires=args.paires, seed=args.graine, simultanees=args.simultanees,
+        a = agent_depuis_spec(args.a, args.simulations, dispositif, nom_a)
+        b = agent_depuis_spec(args.b, sims_b, dispositif, nom_b)
+        r = match(a, b, paires=args.paires, seed=args.graine, simultanees=args.simultanees or 32,
                   protocole=args.protocole)
     print(f"{nom_a} contre {nom_b} : +{r['victoires']} ={r['nulles']} -{r['defaites']} "
           f"sur {r['parties']} parties appariées — score {r['score']:.3f}, "
-          f"écart Elo ≈ {r['elo_diff']:+.0f}, {r['manches'] / max(r['parties'], 1):.1f} manches/partie")
+          f"écart Elo {r['elo']:+.0f} [IC 95 % {r['elo_bas']:+.0f}, {r['elo_haut']:+.0f}], "
+          f"paires 0/½/1/1½/2 : {r['pentanomial']}, {r['manches'] / max(r['parties'], 1):.1f} manches/partie"
+          + (f", {r['secondes']:.0f} s" if "secondes" in r else ""))
     if args.elo:
         c = ClassementElo(args.elo)
         c.ajouter(nom_a, nom_b, r["victoires"] + 0.5 * r["nulles"], r["parties"])
         c.sauver()
         for nom, e in sorted(c.ajuster().items(), key=lambda kv: -kv[1]):
             print(f"  {nom:<24} {e:+7.0f}")
+
+
+def cmd_tournoi(args) -> None:
+    import json
+
+    from .ia.evaluation import tournoi
+    ex = None
+    if args.travailleurs and args.travailleurs > 1:
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+
+        from .ia.entrainement import _init_travailleur
+        ex = ProcessPoolExecutor(args.travailleurs, mp_context=mp.get_context("spawn"),
+                                 initializer=_init_travailleur)
+
+    def suivi(a, b, m):
+        print(f"{a:>28} | {b:<28} score {m['score']:.3f}  Elo {m['elo']:+5.0f} "
+              f"[{m['elo_bas']:+5.0f}, {m['elo_haut']:+5.0f}]  {m['pentanomial']}", flush=True)
+    try:
+        r = tournoi(args.agents, args.paires, args.graine, args.simulations, args.protocole,
+                    _dispositif(args.dispositif), not args.sans_compiler, ex, args.travailleurs or 1, suivi,
+                    args.simultanees)
+    finally:
+        if ex is not None:
+            ex.shutdown()
+    print(f"\nClassement Bradley-Terry ({r['noms'][0]} = 0) :")
+    for nom, e in sorted(r["elo"].items(), key=lambda kv: -kv[1]):
+        print(f"  {nom:<40} {e:+7.0f}")
+    if args.sortie:
+        Path(args.sortie).write_text(json.dumps(r, indent=1, ensure_ascii=False), encoding="utf-8")
 
 
 def cmd_analyse(args) -> None:
@@ -270,7 +351,7 @@ def cmd_bench(args) -> None:
         cfg = ConfigEntrainement.depuis_dict(json.loads(Path(args.config).read_text(encoding="utf-8")))
     cfg.appliquer(args.reglage or [])
     liste = [int(x) for x in args.travailleurs.split(",")] if args.travailleurs else None
-    executer_banc(cfg, liste, args.duree)
+    executer_banc(cfg, liste, args.duree, args.modele)
 
 
 def cmd_follow(args) -> None:
@@ -319,15 +400,39 @@ def main(argv=None) -> None:
     e.add_argument("--paires", type=int, default=20, help="nombre de paires de parties (camps inversés)")
     e.add_argument("--simulations", type=int, default=200)
     e.add_argument("--simulations-b", type=int)
-    e.add_argument("--dispositif", default="cpu")
-    e.add_argument("--simultanees", type=int, default=32)
+    e.add_argument("--dispositif", default="auto")
+    e.add_argument("--simultanees", type=int, help="parties jouées en même temps (défaut : 32, "
+                   "toutes avec le moteur Rust)")
     e.add_argument("--graine", type=int, default=0)
     e.add_argument("--elo", help="fichier JSON de classement à mettre à jour")
     e.add_argument("--protocole", default="aleatoire", choices=["aleatoire", "draft"],
                    help="armées tirées au hasard, ou mise en place avancée (draft)")
     e.add_argument("--travailleurs", type=int, default=0,
                    help="répartir les parties sur N processus (0 = un seul processus)")
+    e.add_argument("--moteur", default="auto", choices=["auto", "rust", "python"],
+                   help="auto : moteur Rust entre deux modèles .pt si le module est compilé")
+    e.add_argument("--sprt", metavar="ELO0,ELO1",
+                   help="test séquentiel (ex. 0,20) : paires jouées par tranches de --paires jusqu'à décision")
+    e.add_argument("--max-paires", type=int, default=2000, help="limite du test séquentiel")
+    e.add_argument("--agent-a", action="append", metavar="CLÉ=VALEUR",
+                   help="réglage de recherche de A (moteur Rust), ex. cle_publique=false, c_scale=0.2")
+    e.add_argument("--agent-b", action="append", metavar="CLÉ=VALEUR")
+    e.add_argument("--sans-compiler", action="store_true", help="réseau non compilé (torch.compile)")
     e.set_defaults(fn=cmd_evaluate)
+    tn = sub.add_parser("tournoi", help="toutes les paires d'agents en matchs appariés, classement")
+    tn.add_argument("agents", nargs="+", help="bots ou modèles « chemin.pt[:clé=valeur,…] » "
+                    "(réglages de recherche : simulations, m, c_scale, cle_publique…)")
+    tn.add_argument("--paires", type=int, default=100)
+    tn.add_argument("--simulations", type=int, default=128)
+    tn.add_argument("--protocole", default="draft", choices=["aleatoire", "draft"])
+    tn.add_argument("--dispositif", default="auto")
+    tn.add_argument("--graine", type=int, default=0)
+    tn.add_argument("--travailleurs", type=int, default=0, help="processus des matchs contre les bots")
+    tn.add_argument("--sans-compiler", action="store_true")
+    tn.add_argument("--simultanees", type=int, default=2048,
+                    help="parties jouées en même temps par le moteur Rust (lots GPU et mémoire)")
+    tn.add_argument("--sortie", help="fichier JSON des résultats")
+    tn.set_defaults(fn=cmd_tournoi)
     an = sub.add_parser("analyser", help="analyse IA d'une position d'un relevé .nch")
     an.add_argument("fichier")
     an.add_argument("--coup", type=int, help="nombre de décisions à rejouer (défaut : toutes)")
@@ -348,6 +453,7 @@ def main(argv=None) -> None:
     bc.add_argument("--travailleurs", help="liste de nombres de processus à essayer, ex. 4,6,7,8")
     bc.add_argument("--duree", type=float, default=45.0, help="secondes par essai")
     bc.add_argument("--set", dest="reglage", action="append", metavar="CLÉ=VALEUR")
+    bc.add_argument("--modele", help="réseau entraîné (.pt) pour l'essai d'auto-jeu (défaut : aléatoire)")
     bc.set_defaults(fn=cmd_bench)
     su = sub.add_parser("suivi", help="tableau de bord d'un entraînement")
     su.add_argument("dossier", nargs="?", default="runs/principal")

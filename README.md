@@ -60,6 +60,8 @@ champ jouer --blanc humain --noir ia:400              # jouer contre le réseau
 champ analyser partie.nch --coup 30                   # score, victoire forcée, meilleurs coups
 champ analyser partie.nch --coup 30 --duree 30        # analyse progressive : 30 s, --profondeur 12, --infini
 champ calibrer runs/continu/parties                   # recalcule l'échelle du score
+champ evaluer a.pt b.pt --sprt 0,20 --protocole draft  # a est-il plus fort que b ? (moteur Rust)
+champ tournoi a.pt b.pt "a.pt:simulations=512" --paires 200   # matrice des résultats, Elo ± IC
 ```
 
 Options d'unités : `premiere` (répartition conseillée du livret), `aleatoire`, ou explicite

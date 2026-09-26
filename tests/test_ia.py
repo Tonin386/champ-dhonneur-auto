@@ -55,6 +55,66 @@ def test_pas_de_fuite_d_information():
             assert np.array_equal(e[k], e2[k]), k
 
 
+def test_encodage_manche_independant_de_la_limite():
+    """La même position s'encode pareil en auto-jeu (100 manches) et en jeu (150)."""
+    g1, g2 = Game(seed=2, max_rounds=100), Game(seed=2, max_rounds=150)
+    rng = random.Random(0)
+    for _ in range(30):
+        a = rng.choice(g1.legal_actions())
+        g1.apply(a)
+        g2.apply(a)
+    e1, e2 = encode_state(g1), encode_state(g2)
+    for k in e1:
+        assert np.array_equal(e1[k], e2[k]), k
+
+
+def test_arbre_sans_piece_face_cachee_adverse():
+    """Une action face cachée d'un autre joueur mène au même nœud quelle que soit la pièce (que
+    l'observateur ne voit pas) ; celles de l'observateur gardent leur pièce."""
+    from champ_dhonneur.engine import FACE_DOWN
+    from champ_dhonneur.ia.recherche import CACHEE
+    adverses = 0
+    for seed in range(4):
+        g = partie_avancee(seed=seed, n=20)
+        if g.done:
+            continue
+        r = RechercheGumbel(ParamsRecherche(simulations=300, bruit=False), seed=0)
+        executer([r.generateur(g)], EvaluateurUniforme())
+        moi = g.team(g.to_move)
+        pile = [r.racine]
+        while pile:
+            nd = pile.pop()
+            for a, ch in nd.enfants.items():
+                if a.kind in FACE_DOWN:
+                    adverse = ch.equipe != moi
+                    assert (a.coin == CACHEE) == adverse, a
+                    adverses += adverse
+                pile.append(ch)
+    assert adverses > 0
+    # ancienne recherche (comparaisons seulement) : la pièce de l'adversaire fait partie de l'arête
+    g = partie_avancee(seed=0, n=20)
+    r = RechercheGumbel(ParamsRecherche(simulations=300, bruit=False, cle_publique=False), seed=0)
+    executer([r.generateur(g)], EvaluateurUniforme())
+    pile, cachees = [r.racine], 0
+    while pile:
+        nd = pile.pop()
+        cachees += sum(a.coin == CACHEE for a in nd.enfants)
+        pile.extend(nd.enfants.values())
+    assert cachees == 0
+
+
+def test_ligne_avec_action_face_cachee_adverse():
+    """L'analyse rejoue une arête face cachée avec une pièce que le joueur peut détenir."""
+    from champ_dhonneur.engine import PASS, Action
+    from champ_dhonneur.ia.analyse import _representant
+    from champ_dhonneur.ia.recherche import CACHEE
+    g = partie_avancee(seed=4, n=15)
+    while g.pending or not g.players[g.to_move].hand:
+        g.apply(g.legal_actions()[0])
+    b = _representant(g, Action(PASS, CACHEE))
+    assert b is not None and b.kind == PASS and b in g.legal_actions()
+
+
 def test_encodage_actions():
     g = partie_avancee(seed=8, n=25)
     legal = g.legal_actions()
@@ -215,6 +275,45 @@ def test_releves_autojeu_et_evaluation_rejouables():
     assert parse_headers(r["releves"][0])["Type"] == "evaluation"
 
 
+def test_statistiques_par_paire_et_sprt():
+    from champ_dhonneur.ia.evaluation import (bornes_sprt, llr_sprt, pentanomial, resume, spec_reseau,
+                                              stats_paires)
+    # (graine, camp de A, score de A, manches) : 3 paires gagnées 2-0, 1 paire partagée, 1 paire perdue
+    parties = [(1, 0, 1, 10), (1, 1, 1, 10), (2, 0, 1, 9), (2, 1, 1, 9), (3, 0, 1, 8), (3, 1, 1, 8),
+               (4, 0, 1, 12), (4, 1, -1, 12), (5, 0, -1, 7), (5, 1, -1, 7)]
+    assert pentanomial(parties) == [1, 0, 1, 0, 3]
+    r = resume(parties)
+    assert (r["victoires"], r["defaites"], r["parties"], r["paires"]) == (7, 3, 10, 5)
+    assert r["elo_bas"] < r["elo"] < r["elo_haut"] and r["elo"] > 0
+    egal = stats_paires([10, 0, 20, 0, 10])
+    assert egal["elo"] == 0 and egal["elo_bas"] < 0 < egal["elo_haut"]
+    bas, haut = bornes_sprt(0.05, 0.05)
+    assert bas < 0 < haut
+    assert llr_sprt([2, 10, 30, 30, 28], 0, 20) > 0 > llr_sprt([28, 30, 30, 10, 2], 0, 20)
+    assert spec_reseau("glouton") is None
+    assert spec_reseau("m/iter_0171.pt") == ("m/iter_0171.pt", {})
+    assert spec_reseau("iter.pt:simulations=512,cle_publique=false") == (
+        "iter.pt", {"simulations": 512, "cle_publique": False})
+
+
+def test_retours_lambda():
+    """TD(λ) le long de chaque partie, points de vue alternés, parties nulles laissées à q."""
+    from champ_dhonneur.ia.cibles import retours_lambda
+    from champ_dhonneur.ia.encodage import GLOB_F
+    # partie 1 : équipes 0, 1, 0, l'équipe 0 gagne ; partie 2 : nulle
+    z = np.array([1, -1, 1, 0, 0], np.float32)
+    q = np.array([0.2, -0.4, 0.6, 0.1, -0.3], np.float32)
+    data = {"z": z, "q": q, "debut": np.array([1, 0, 0, 1, 0], np.int8)}
+    assert np.allclose(retours_lambda(data, 0.0), q)
+    assert np.allclose(retours_lambda(data, 1.0), [1, -1, 1, 0.1, -0.3])
+    g = retours_lambda(data, 0.5)
+    assert np.allclose(g, [0.4, -0.6, 0.8, 0.1, -0.3])
+    # anciens fichiers sans colonne « debut » : frontières déduites de la manche
+    glob_f = np.zeros((5, GLOB_F), np.float16)
+    glob_f[:, 18] = np.array([1, 3, 5, 1, 2]) / 50
+    assert np.allclose(retours_lambda({"z": z, "q": q, "glob_f": glob_f}, 0.5), g)
+
+
 def test_classement_elo():
     c = ClassementElo("/tmp/_elo_test.json")
     c.resultats = []
@@ -253,6 +352,25 @@ def test_reseau_et_apprentissage(tmp_path):
     assert (tmp_path / "run" / "journal.jsonl").read_text().count("\n") == 2
 
 
+def test_reinitialisation(tmp_path):
+    """Réseau neuf entraîné depuis zéro sur la fenêtre, qui remplace l'ancien (optimiseur neuf) ;
+    auto-jeu joué par le meilleur réseau."""
+    from champ_dhonneur.ia.entrainement import ConfigEntrainement, Entraineur
+    cfg = ConfigEntrainement()
+    cfg.appliquer([f"dossier={tmp_path / 'run'}", "iterations=3", "travailleurs=0",
+                   "parties_par_iteration=2", "amorce_iterations=1", "amorce_simulations=6",
+                   "autojeu.simulations=8", "autojeu.simulations_rapides=4", "autojeu.max_manches=10",
+                   "fenetre_min=10", "lot=16", "eval_tous=1", "eval_paires=1", "eval_simulations=4",
+                   "reinit_tous=3", "reinit_reutilisation=1", "autojeu_reseau=meilleur",
+                   "ema=0.9", '"modele"={"d": 32, "couches": 1, "tetes": 2}'.replace('"modele"', "modele")])
+    Entraineur(cfg).executer()
+    import json
+    lignes = [json.loads(l) for l in (tmp_path / "run" / "journal.jsonl").read_text().splitlines()]
+    assert len(lignes) == 3
+    assert lignes[2]["apprentissage"].get("reinitialisation") and lignes[2]["apprentissage"]["pas"] >= 1
+    assert json.loads((tmp_path / "run" / "etat.json").read_text())["derniere_reinit"] == 3
+
+
 def test_bot_ia(tmp_path):
     from champ_dhonneur.bots import make_bot
     from champ_dhonneur.ia.modele import ConfigModele, ReseauChamp, sauver
@@ -271,8 +389,9 @@ def test_configs_valides():
     for f in Path("configs").glob("*.json"):
         cfg = ConfigEntrainement.depuis_dict(json.loads(f.read_text(encoding="utf-8")))
         assert cfg.modele.d % cfg.modele.tetes == 0, f
-        if cfg.dispositif_autojeu == "cuda":
-            # au moins 3 vagues de parties simultanées par processus (7 par défaut : portable 8 cœurs)
+        if cfg.dispositif_autojeu == "cuda" and not cfg.autojeu.continu:
+            # au moins 3 vagues de parties simultanées par processus (7 par défaut : portable 8 cœurs) ;
+            # inutile en auto-jeu continu, où les parties en cours passent à l'itération suivante
             n = cfg.travailleurs if cfg.travailleurs > 0 else 7
             assert cfg.parties_par_iteration / n >= 3 * cfg.autojeu.simultanees, f
 

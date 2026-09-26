@@ -12,9 +12,9 @@ Techniques utilisées :
     recherche mêlée à la cible de valeur est celle du coup joué (la moyenne de la racine compte
     aussi les coups écartés : elle sous-estime la position du joueur au trait) ;
   * *playout cap randomization* (KataGo) : une fraction des coups reçoit une
-    recherche complète et produit une cible de politique ; les autres coups,
-    joués avec une recherche rapide, ne servent qu'à la cible de valeur, ce
-    qui multiplie les parties jouées pour un même budget ;
+    recherche complète et produit un exemple (cibles de politique et de valeur) ;
+    les autres coups, joués avec une recherche rapide, ne produisent pas d'exemple,
+    ce qui multiplie les parties jouées pour un même budget ;
   * décisions forcées (une seule action légale) jouées sans recherche ni
     exemple enregistré ;
   * mise en place avancée : une part `p_draft` des parties commence par le draft des
@@ -58,6 +58,12 @@ class ParamsAutoJeu:
     p_draft: float = 0.0       # part des parties commencées par la mise en place avancée
     simulations_draft: int = 128   # simulations des choix de cartes (recherches complètes)
     meilleur_coup: bool = False    # coup joué = meilleur coup de la recherche (voir l'en-tête)
+    # moteur Rust : les parties en cours ne s'arrêtent pas à la fin d'un appel, elles continuent au
+    # suivant (avec le réseau d'alors) ; les lots restent pleins jusqu'au bout de chaque itération
+    continu: bool = False
+    # moteur Rust : > 0 = choix de carte exact pendant le draft (minimax sur les répartitions
+    # finales, chacune évaluée sur ce nombre de tirages des sacs ; voir rust/src/draft.rs)
+    draft_exact: int = 0
 
 
 def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tuple[dict, dict]:
@@ -102,7 +108,8 @@ def jouer_parties(evaluateur, P: ParamsAutoJeu, seed: int | None = None) -> tupl
             stats["parties_draft"] += 1
             if g.winner is not None and g.winner == g.team(g.draft.first):
                 stats["victoires_choisit"] += 1
-        for ex in slot["ex"]:
+        for k, ex in enumerate(slot["ex"]):
+            ex["debut"] = int(k == 0)
             ex["z"] = 0.0 if g.winner is None else (1.0 if g.winner == ex["equipe"] else -1.0)
             ex.update(cibles_finales(g, ex["equipe"]))
             exemples.append(ex)
@@ -236,6 +243,7 @@ def empaqueter(exemples: list[dict]) -> dict[str, np.ndarray]:
     out["marge"] = np.array([e["marge"] for e in exemples], np.int8)
     out["main_adv"] = (np.stack([e["main_adv"] for e in exemples]) if n
                        else np.zeros((0, N_COIN_TYPES), np.int8))
+    out["debut"] = np.array([e.get("debut", 0) for e in exemples], np.int8)
     return out
 
 

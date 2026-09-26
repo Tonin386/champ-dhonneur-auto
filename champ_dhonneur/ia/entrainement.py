@@ -61,6 +61,10 @@ class ConfigEntrainement:
     reutilisation: float = 4.0
     poids_valeur: float = 1.0
     melange_q: float = 0.25
+    # > 0 : la valeur de recherche mêlée à la cible de valeur est remplacée par le retour TD(λ)
+    # de la partie (moyenne des valeurs de recherche des positions suivantes, puis du résultat ;
+    # voir ia/cibles.py) : cible bien moins bruitée que le résultat final seul
+    valeur_lambda: float = 0.0
     # mise en place avancée : poids des exemples de draft dans la perte de politique, part de la
     # valeur de recherche dans leur cible de valeur (le résultat final y est très bruité)
     poids_draft: float = 0.5
@@ -68,6 +72,13 @@ class ConfigEntrainement:
     # têtes auxiliaires (0 = désactivée) : contrôle final des Lieux, marge finale, main adverse
     poids_aux: dict = field(default_factory=lambda: {"lieux": 0.15, "marge": 0.1, "main_adverse": 0.1})
     ema: float = 0.0                 # > 0 : moyenne mobile des poids publiée (dernier.pt, meilleur.pt)
+    # > 0 : `reinit_tous` itérations après la précédente (état `derniere_reinit`, 0 au départ),
+    # un réseau neuf est entraîné depuis zéro sur la
+    # fenêtre d'exemples (`reinit_reutilisation` passages, échauffement puis décroissance cosinus
+    # de `lr` à `lr_min`) et remplace l'ancien : un réseau entraîné en continu perd de sa
+    # plasticité (mesuré : log-loss de valeur 0,73 contre 0,58 pour un réseau neuf, mêmes données)
+    reinit_tous: int = 0
+    reinit_reutilisation: float = 4.0
     eval_protocole: str = "aleatoire"  # "draft" : les matchs d'évaluation commencent par le draft
     # valeur dynamique des unités (ia/valeurs.py) et recalibrage de l'échelle du scoreur
     unites: dict = field(default_factory=lambda: {"actif": False, "pools": 256, "pioches": 2,
@@ -79,8 +90,20 @@ class ConfigEntrainement:
     eval_tous: int = 5
     eval_paires: int = 24
     eval_simulations: int = 64
-    eval_ancres: list = field(default_factory=lambda: ["glouton"])   # ex. "heur:64", "mcts:400"
+    eval_ancres: list = field(default_factory=lambda: ["glouton"])   # ex. "heur:64", "mcts:400",
+    #   ou un modèle figé « chemin.pt » (hors du dossier modeles/, dont les anciens fichiers sont purgés)
     eval_meilleur: bool = True       # affronter aussi le meilleur modèle (s'il n'est pas le précédent)
+    eval_precedent: bool = True      # affronter la version évaluée précédente
+    # paires des matchs contre un réseau (moteur Rust, bien plus rapide que les matchs contre les bots)
+    eval_paires_reseaux: int = 100
+    # promotion de meilleur.pt : "elo" (meilleur Elo Bradley-Terry, sans marge) ou "ic" (le nouveau
+    # modèle bat le meilleur, borne basse de l'intervalle de confiance à 95 % de l'écart > 0)
+    eval_promotion: str = "elo"
+    inference_compilee: bool = False # réseau compilé (torch.compile) pour l'auto-jeu et l'évaluation
+    # réseau qui joue l'auto-jeu : "dernier" (le plus récent, comme AlphaZero) ou "meilleur" (le
+    # meilleur démontré, comme AlphaGo Zero : avec eval_promotion "ic", un réseau n'est promu que
+    # si sa supériorité est établie ; l'apprentissage continue sur le dernier réseau)
+    autojeu_reseau: str = "dernier"
     travailleurs_evaluation: int = 0 # processus pour les évaluations (0 = travailleurs)
     purger_donnees: bool = True      # supprimer les fichiers d'exemples sortis de la fenêtre
     purger_modeles: bool = True      # ne garder que les modèles évalués (tous les eval_tous)
@@ -192,17 +215,25 @@ def _init_travailleur() -> None:
 
 
 def _travailleur(args):
-    """Joue un paquet de parties. Le réseau n'est rechargé que s'il a changé sur disque."""
-    chemin, dispositif, params, seed, moteur = args
+    """Joue un paquet de parties. Le réseau n'est rechargé que s'il a changé sur disque, et en
+    place (le réseau compilé est conservé d'une itération à l'autre)."""
+    chemin, dispositif, params, seed, moteur, *reste = args
+    compiler = bool(reste and reste[0])
     from .evaluateurs import EvaluateurHeuristique, EvaluateurReseau
     if chemin is None:
         ev = EvaluateurHeuristique()
     else:
-        cle = (chemin, os.path.getmtime(chemin), dispositif)
-        ev = _EV_CACHE.get(cle)
-        if ev is None:
-            _EV_CACHE.clear()
-            ev = _EV_CACHE[cle] = EvaluateurReseau.depuis_fichier(chemin, dispositif)
+        cle = (dispositif, compiler)
+        date = os.path.getmtime(chemin)
+        e = _EV_CACHE.get(cle)
+        if e is None or (e[0], e[1]) != (chemin, date):
+            if e is not None and e[2].recharger(chemin):
+                e[0], e[1] = chemin, date
+            else:
+                _EV_CACHE.clear()
+                _EV_CACHE[cle] = [chemin, date, EvaluateurReseau.depuis_fichier(chemin, dispositif,
+                                                                                compiler=compiler)]
+        ev = _EV_CACHE[cle][2]
     return jouer(ev, params, seed, moteur)
 
 
@@ -273,14 +304,23 @@ class Entraineur:
         for s in shards:
             if total >= self.cfg.fenetre:
                 break
-            d = dict(np.load(s))
+            d = self._preparer(dict(np.load(s)))
             self.fenetre.insert(0, d)
             total += len(d["z"])
         if total:
             print(f"Fenêtre rechargée : {total} exemples ({len(self.fenetre)} fichiers)")
 
+    def _preparer(self, d: dict) -> dict:
+        """Exemples d'un fichier prêts pour l'apprentissage : retours TD(λ) si demandés ; la
+        colonne `debut` (absente des anciens fichiers) ne sert qu'à les calculer."""
+        if self.cfg.valeur_lambda > 0 and len(d.get("z", [])):
+            from .cibles import retours_lambda
+            d["g"] = retours_lambda(d, self.cfg.valeur_lambda)
+        d.pop("debut", None)
+        return d
+
     def _ajouter(self, data: dict) -> None:
-        self.fenetre.append(data)
+        self.fenetre.append(self._preparer(data))
         while sum(len(d["z"]) for d in self.fenetre) - len(self.fenetre[0]["z"]) >= self.cfg.fenetre:
             self.fenetre.pop(0)
         if self.cfg.purger_donnees:
@@ -304,10 +344,14 @@ class Entraineur:
             params.p_draft = 0.0     # l'heuristique ne sait pas évaluer une composition d'armée
         else:
             chemin = str(self.dir / "modeles" / "dernier.pt")
+        meilleur = (cfg.autojeu_reseau == "meilleur" and not amorce and self.etat.get("meilleur")
+                    and (self.dir / "modeles" / "meilleur.pt").exists())
+        if meilleur:
+            chemin = str(self.dir / "modeles" / "meilleur.pt")
         n_w = max(1, cfg.travailleurs)
         per = [cfg.parties_par_iteration // n_w + (1 if i < cfg.parties_par_iteration % n_w else 0)
                for i in range(n_w)]
-        joueur = "heuristique" if amorce else f"iter_{it - 1:04d}"
+        joueur = "heuristique" if amorce else (self.etat["meilleur"] if meilleur else f"iter_{it - 1:04d}")
         if cfg.direct:   # spectateur web : phase et une partie en cours par processus (direct/)
             ecrire_phase(self.dir, "autojeu", it, joueur=joueur, amorce=bool(amorce))
             tables = preparer_tables(self.dir, n_w)
@@ -319,11 +363,14 @@ class Entraineur:
             p.parties = n
             p.releves = cfg.releves_autojeu // n_w + (1 if i < cfg.releves_autojeu % n_w else 0)
             # au moins ~3 vagues de parties par processus : sinon la fin de l'itération tourne
-            # avec des lots presque vides (GPU sous-utilisé, processus qui attendent)
-            p.simultanees = max(1, min(p.simultanees, max(8, n // 3), n))
+            # avec des lots presque vides (GPU sous-utilisé, processus qui attendent) ; inutile en
+            # auto-jeu continu (les parties en cours passent à l'itération suivante)
+            if amorce or not p.continu:
+                p.continu = False     # l'amorçage heuristique joue avec le moteur Python
+                p.simultanees = max(1, min(p.simultanees, max(8, n // 3), n))
             p.direct = tables[i] if cfg.direct else ""
             taches.append((chemin, self.dev_auto, p, cfg.graine * 1_000_003 + it * 1009 + i,
-                           cfg.moteur_autojeu))
+                           cfg.moteur_autojeu, cfg.inference_compilee))
         if cfg.travailleurs <= 0:
             resultats = [_travailleur(t) for t in taches]
         else:
@@ -386,6 +433,8 @@ class Entraineur:
              "n_act": torch.from_numpy(b["n_act"].astype(np.int64)).to(self.dev),
              "z": torch.from_numpy(b["z"]).to(self.dev),
              "q": torch.from_numpy(b["q"]).to(self.dev)}
+        if "g" in b:
+            y["g"] = torch.from_numpy(b["g"]).to(self.dev)
         for k in ("lieux", "marge", "main_adv"):
             if k in b:
                 y[k] = torch.from_numpy(b[k].astype(np.int64)).to(self.dev)
@@ -413,23 +462,53 @@ class Entraineur:
     def valider(self, data: dict, maximum: int = 4096) -> dict:
         """Mesures sur des parties que le réseau n'a jamais vues (avant d'apprendre dessus).
 
-        Précision de valeur : signe correct du résultat final. Premier coup : le coup préféré
-        du réseau est aussi celui de la cible π'. KL : écart entre politique et cible.
+        Mesures du modèle publié (poids moyennés EMA s'il y en a : c'est lui qui joue), et
+        mesures de valeur des poids bruts (suffixe `_brut`).
+
+        Précision de valeur : signe correct du résultat final. Log-loss de valeur : entropie
+        croisée V/N/D contre le résultat (l'étalonnage, plus pertinent que la précision dans un
+        jeu où le hasard domine en début de partie) ; `logloss_q` est celle de la valeur de la
+        recherche, `logloss_base` celle d'une prédiction constante (fréquences des résultats).
+        Par tranche de manche (`_m1_3`, `_m4_9`, `_m10`). Premier coup : le coup préféré du
+        réseau est aussi celui de la cible π'. KL : écart entre politique et cible.
         """
-        torch = self.torch
         n = len(data.get("z", []))
         if n == 0:
             return {}
         idx = np.random.default_rng(0).permutation(n)[:maximum]
-        out = {"kl": 0.0, "premier_coup": 0.0, "precision_valeur": 0.0, "erreur_valeur": 0.0}
+        res = self._mesurer(self.ema if self.ema is not None else self.model, data, idx)
+        if self.ema is not None:
+            brut = self._mesurer(self.model, data, idx, valeur_seule=True)
+            res.update({f"{k}_brut": v for k, v in brut.items()})
+        return res
+
+    def _mesurer(self, model, data: dict, idx: np.ndarray, valeur_seule: bool = False) -> dict:
+        torch = self.torch
+        out = {"kl": 0.0, "premier_coup": 0.0, "precision_valeur": 0.0, "erreur_valeur": 0.0,
+               "logloss_valeur": 0.0, "logloss_q": 0.0}
         dr = {"kl_draft": 0.0, "premier_coup_draft": 0.0}
+        tranches = {"m1_3": (0, 3), "m4_9": (4, 9), "m10": (10, 10**9)}
+        par_tranche = {t: {"n": 0, "precision_valeur": 0.0, "logloss_valeur": 0.0, "logloss_q": 0.0}
+                       for t in tranches}
         tot = n_draft = 0
-        self.model.eval()
+        classes = torch.zeros(3, device=self.dev)
+        etait = model.training
+        model.eval()
         with torch.inference_mode():
             for s in range(0, len(idx), 512):
                 x, y = self._tenseurs({k: v[idx[s:s + 512]] for k, v in data.items()})
-                logits, vlog = self.model(x)
+                logits, vlog = model(x)
                 logits, vlog = logits.float(), vlog.float()
+                z = y["z"]
+                cz = torch.where(z > 0, 0, torch.where(z < 0, 2, 1))       # classe V/N/D
+                ll = torch.nn.functional.cross_entropy(vlog, cz, reduction="none")
+                # q n'a pas de probabilité de nulle : 1 % fixe (nulles quasi absentes en auto-jeu)
+                q = y["q"].float()
+                pq = torch.stack([0.99 * (1 + q) / 2, torch.full_like(q, 0.01), 0.99 * (1 - q) / 2], -1)
+                llq = -torch.log(pq.gather(1, cz[:, None])[:, 0].clamp(1e-3, 1.0))
+                classes += torch.bincount(cz, minlength=3).float()
+                out["logloss_valeur"] += ll.sum().item()
+                out["logloss_q"] += llq.sum().item()
                 mask = torch.arange(logits.shape[1], device=self.dev)[None] < y["n_act"][:, None]
                 logp = torch.log_softmax(logits.masked_fill(~mask, -1e9), -1)
                 pi = y["pi"] / y["pi"].sum(-1, keepdim=True).clamp_min(1e-8)
@@ -437,7 +516,6 @@ class Entraineur:
                 top = (logits.masked_fill(~mask, -1e9).argmax(-1) == pi.argmax(-1)).float()
                 pv = torch.softmax(vlog, -1)
                 v = pv[:, 0] - pv[:, 2]
-                z = y["z"]
                 prec = ((v.sign() == z.sign()) | ((z == 0) & (v.abs() < 0.3))).float()
                 m = len(z)
                 out["kl"] += kl.sum().item()
@@ -448,11 +526,28 @@ class Entraineur:
                 dr["kl_draft"] += kl[d].sum().item()
                 dr["premier_coup_draft"] += top[d].sum().item()
                 n_draft += int(d.sum().item())
+                manche = torch.round(x["glob_f"][:, 18] * 50)      # gf[18] = min(manche, 100) / 50
+                for t, (lo, hi) in tranches.items():
+                    sel = (manche >= lo) & (manche <= hi) & ~d
+                    pt = par_tranche[t]
+                    pt["n"] += int(sel.sum().item())
+                    pt["precision_valeur"] += prec[sel].sum().item()
+                    pt["logloss_valeur"] += ll[sel].sum().item()
+                    pt["logloss_q"] += llq[sel].sum().item()
                 tot += m
+        if etait:
+            model.train()
         res = {k: round(v / tot, 4) for k, v in out.items()}
-        if n_draft:
+        f = classes / classes.sum()
+        res["logloss_base"] = round(float(-(f * torch.log(f.clamp_min(1e-9))).sum()), 4)
+        for t, pt in par_tranche.items():
+            if pt["n"]:
+                res.update({f"{k}_{t}": round(v / pt["n"], 4) for k, v in pt.items() if k != "n"})
+        if n_draft and not valeur_seule:
             res.update({k: round(v / n_draft, 4) for k, v in dr.items()})
         res["part_draft"] = round(n_draft / tot, 4)
+        if valeur_seule:
+            res = {k: v for k, v in res.items() if "valeur" in k}
         return res
 
     def lr_actuel(self, it: int) -> float:
@@ -466,7 +561,38 @@ class Entraineur:
         f = min(1.0, it / horizon)
         return cfg.lr_min + 0.5 * (cfg.lr - cfg.lr_min) * (1 + math.cos(math.pi * f))
 
-    def apprendre(self, it: int, n_nouveaux: int, n_pas: int | None = None) -> dict:
+    def reinitialiser(self, it: int) -> dict:
+        """Réseau neuf entraîné depuis zéro sur la fenêtre d'exemples, qui remplace l'ancien
+        (poids, moyenne mobile et optimiseur). Taux d'apprentissage : échauffement puis
+        décroissance cosinus de `lr` à `lr_min` sur tous les pas."""
+        import copy
+
+        from .modele import ReseauChamp
+        torch = self.torch
+        cfg = self.cfg
+        t0 = time.time()
+        self.model = ReseauChamp(cfg.modele).to(self.dev)
+        self.opt = torch.optim.AdamW(self.model.parameters(), lr=cfg.lr,
+                                     weight_decay=cfg.poids_decroissance, betas=(0.9, 0.99))
+        if self.ema is not None:
+            self.ema = copy.deepcopy(self.model).requires_grad_(False)
+        self.fwd = torch.compile(self.model, dynamic=True) if cfg.compiler else self.model
+        n_pas = max(1, math.ceil(self.taille_fenetre() * cfg.reinit_reutilisation / cfg.lot))
+        chauffe = min(cfg.echauffement, n_pas // 10)
+
+        def lr(k: int) -> float:
+            if k < chauffe:
+                return cfg.lr * (k + 1) / chauffe
+            f = (k - chauffe) / max(1, n_pas - chauffe)
+            return cfg.lr_min + 0.5 * (cfg.lr - cfg.lr_min) * (1 + math.cos(math.pi * f))
+        out = self.apprendre(it, 0, n_pas=n_pas, lr=lr, ema_depuis_zero=True)
+        out["secondes"] = round(time.time() - t0, 1)
+        return out
+
+    def apprendre(self, it: int, n_nouveaux: int, n_pas: int | None = None, lr=None,
+                  ema_depuis_zero: bool = False) -> dict:
+        """`lr(k)` : taux d'apprentissage du pas k (par défaut `lr_actuel`) ; `ema_depuis_zero` :
+        moyenne mobile avec démarrage progressif compté depuis le premier de ces pas."""
         torch = self.torch
         cfg = self.cfg
         if self.taille_fenetre() < min(cfg.fenetre_min, cfg.lot):
@@ -483,9 +609,9 @@ class Entraineur:
         dtype = torch.bfloat16 if bf16 else torch.float16
         if not hasattr(self, "scaler"):
             self.scaler = torch.amp.GradScaler("cuda", enabled=amp and not bf16)
-        for _ in range(n_pas):
+        for i_pas in range(n_pas):
             for grp in self.opt.param_groups:
-                grp["lr"] = self.lr_actuel(it)
+                grp["lr"] = lr(i_pas) if lr is not None else self.lr_actuel(it)
             x, y = self._lot(rng)
             with torch.autocast(self.dev.type, dtype=dtype, enabled=amp):
                 logits, vlog, aux = self.fwd(x, aux=True)
@@ -499,7 +625,7 @@ class Entraineur:
             cible = torch.stack([(z > 0).float(), (z == 0).float(), (z < 0).float()], -1)
             mq = cfg.amorce_melange_q if it <= cfg.amorce_iterations else cfg.melange_q
             mq = torch.where(y["draft"], max(mq, cfg.melange_q_draft), mq).unsqueeze(-1)
-            q = y["q"].clamp(-1, 1)
+            q = y.get("g", y["q"]).clamp(-1, 1)
             cq = torch.stack([(1 + q) / 2, torch.zeros_like(q), (1 - q) / 2], -1)
             cible = (1 - mq) * cible + mq * cq
             l_val = -(cible * torch.log_softmax(vlog, -1)).sum(-1).mean()
@@ -516,7 +642,8 @@ class Entraineur:
             self.etat["pas"] += 1
             if self.ema is not None:
                 with torch.no_grad():   # moyenne mobile, avec démarrage progressif
-                    dec = min(cfg.ema, (1 + self.etat["pas"]) / (10 + self.etat["pas"]))
+                    n = i_pas if ema_depuis_zero else self.etat["pas"]
+                    dec = min(cfg.ema, (1 + n) / (10 + n))
                     for pe, pm in zip(self.ema.parameters(), self.model.parameters()):
                         pe.lerp_(pm, 1 - dec)
             with torch.no_grad():
@@ -534,7 +661,7 @@ class Entraineur:
         self.model.eval()
         out = {k: v / n_pas for k, v in cumul.items()}
         out["pas"] = n_pas
-        out["lr"] = self.lr_actuel(it)
+        out["lr"] = lr(n_pas - 1) if lr is not None else self.lr_actuel(it)
         return out
 
     # ---------------------------------------------------------- évaluation
@@ -543,46 +670,59 @@ class Entraineur:
         le meilleur modèle. Le classement Bradley-Terry est réajusté sur tous les résultats : l'Elo
         de chaque modèle déjà évalué est ainsi réévalué à chaque nouvelle évaluation.
 
-        Avec des processus d'auto-jeu, les parties sont réparties sur eux (évaluation
-        parallèle) ; sinon elles sont jouées dans le processus principal.
+        Contre un réseau (modèle précédent, meilleur, ancre figée .pt), le match se joue avec le
+        moteur Rust dans ce processus (`eval_paires_reseaux` paires) ; contre un bot, avec le moteur
+        Python, réparti sur les processus d'auto-jeu s'il y en a, en même temps.
         """
-        from .evaluation import ClassementElo, agent_depuis_spec, match, match_parallele
+        from concurrent.futures import ThreadPoolExecutor
+
+        from . import rs
+        from .evaluation import (ClassementElo, agent_depuis_spec, match, match_parallele, matchs_contre,
+                                 nom_spec, spec_reseau)
         cfg = self.cfg
         nom = f"iter_{it:04d}"
         chemin = str(self.dir / "modeles" / f"{nom}.pt")
-        adversaires = [(spec, spec) for spec in cfg.eval_ancres]
+        adversaires = [(spec, nom_spec(spec)) for spec in cfg.eval_ancres]
         prec = self.etat.get("dernier_evalue")
-        if prec and (self.dir / "modeles" / f"{prec}.pt").exists():
+        if cfg.eval_precedent and prec and (self.dir / "modeles" / f"{prec}.pt").exists():
             adversaires.append((str(self.dir / "modeles" / f"{prec}.pt"), prec))
         meilleur = self.etat.get("meilleur")
-        if cfg.eval_meilleur and meilleur and meilleur != prec and (self.dir / "modeles" / f"{meilleur}.pt").exists():
+        if (cfg.eval_meilleur or cfg.eval_promotion == "ic") and meilleur and meilleur != nom                 and all(n != meilleur for _, n in adversaires)                 and (self.dir / "modeles" / f"{meilleur}.pt").exists():
             adversaires.append((str(self.dir / "modeles" / f"{meilleur}.pt"), meilleur))
+        rust = rs.disponible() and cfg.moteur_autojeu != "python"
+        reseaux = [a for a in adversaires if rust and spec_reseau(a[0]) is not None]
+        bots = [a for a in adversaires if a not in reseaux]
         classement = ClassementElo(self.dir / "elo.json")
         rapports = {}
-        if self.pool is not None:
-            # les matchs contre les différents adversaires se jouent en même temps, chacun sur une
-            # part des processus : une partie d'évaluation est limitée par sa latence (recherche
-            # après recherche), on gagne donc à jouer beaucoup de parties simultanément
-            from concurrent.futures import ThreadPoolExecutor
-            n_eval = cfg.travailleurs_evaluation or cfg.travailleurs
-            part = max(1, n_eval // len(adversaires))
 
-            def jouer_contre(adv):
-                spec, nom_adv = adv
+        def jouer_bot(adv):
+            spec, nom_adv = adv
+            if self.pool is not None:
+                n_eval = cfg.travailleurs_evaluation or cfg.travailleurs
                 return match_parallele(chemin, spec, cfg.eval_paires, 10_000 + it, self.pool,
-                                       n_morceaux=part, simulations=cfg.eval_simulations,
-                                       dispositif=self.dev_auto, nom_a=nom, nom_b=nom_adv,
-                                       releves=cfg.releves_evaluation, protocole=cfg.eval_protocole)
-            with ThreadPoolExecutor(len(adversaires)) as tex:
-                resultats = list(tex.map(jouer_contre, adversaires))
-        else:
-            resultats = []
-            for spec, nom_adv in adversaires:
-                a = agent_depuis_spec(chemin, cfg.eval_simulations, str(self.dev), nom)
-                b = agent_depuis_spec(spec, cfg.eval_simulations, str(self.dev), nom_adv)
-                resultats.append(match(a, b, paires=cfg.eval_paires, seed=10_000 + it,
-                                       releves=cfg.releves_evaluation, protocole=cfg.eval_protocole))
-        for (spec, nom_adv), r in zip(adversaires, resultats):
+                                       n_morceaux=max(1, n_eval // max(len(bots), 1)),
+                                       simulations=cfg.eval_simulations, dispositif=self.dev_auto,
+                                       nom_a=nom, nom_b=nom_adv, releves=cfg.releves_evaluation,
+                                       protocole=cfg.eval_protocole)
+            a = agent_depuis_spec(chemin, cfg.eval_simulations, str(self.dev), nom)
+            b = agent_depuis_spec(spec, cfg.eval_simulations, str(self.dev), nom_adv)
+            return match(a, b, paires=cfg.eval_paires, seed=10_000 + it,
+                         releves=cfg.releves_evaluation, protocole=cfg.eval_protocole)
+
+        # les matchs contre les bots (moteur Python, limités par le CPU) se jouent en même temps
+        # que ceux contre les réseaux (moteur Rust, GPU de ce processus)
+        with ThreadPoolExecutor(max(1, len(bots))) as tex:
+            futurs = [tex.submit(jouer_bot, adv) for adv in bots] if self.pool is not None else []
+            resultats = matchs_contre(
+                chemin, [(*spec_reseau(spec), nom_adv) for spec, nom_adv in reseaux],
+                cfg.eval_paires_reseaux, 10_000 + it, cfg.eval_simulations, str(self.dev),
+                cfg.eval_protocole, cfg.releves_evaluation, cfg.inference_compilee, nom)
+            for (spec, nom_adv), f in zip(bots, futurs):
+                resultats[nom_adv] = f.result()
+            for spec, nom_adv in bots[len(futurs):]:
+                resultats[nom_adv] = jouer_bot((spec, nom_adv))
+        for spec, nom_adv in adversaires:
+            r = resultats[nom_adv]
             court = "".join(c if c.isalnum() else "_" for c in nom_adv)
             for k, texte in enumerate(r.pop("releves", [])):
                 self.ecrire_releve(f"{it:05d}-eval-{court}-{k + 1}", texte, {"Iteration": it})
@@ -591,15 +731,21 @@ class Entraineur:
         classement.sauver()
         elo = classement.ajuster()
         self.etat["dernier_evalue"] = nom
-        meilleur = self.etat.get("meilleur")
-        if meilleur is None or elo.get(nom, -1e9) >= elo.get(meilleur, -1e9):
+        if meilleur is None or meilleur == nom:
+            promu = True
+        elif cfg.eval_promotion == "ic":
+            r = rapports.get(meilleur)
+            promu = r is not None and r.get("elo_bas", -1.0) > 0
+        else:
+            promu = elo.get(nom, -1e9) >= elo.get(meilleur, -1e9)
+        if promu:
             self.etat["meilleur"] = nom
             shutil.copy(self.dir / "modeles" / f"{nom}.pt", self.dir / "modeles" / "meilleur.tmp")
             os.replace(self.dir / "modeles" / "meilleur.tmp", self.dir / "modeles" / "meilleur.pt")
         self._purger_evalues()
+        cles = ("victoires", "nulles", "defaites", "score", "elo", "elo_bas", "elo_haut", "pentanomial")
         return {"elo": round(elo.get(nom, 0.0), 1), "meilleur": self.etat["meilleur"],
-                "matchs": {k: {c: v[c] for c in ("victoires", "nulles", "defaites", "score")}
-                           for k, v in rapports.items()}}
+                "matchs": {k: {c: v.get(c) for c in cles} for k, v in rapports.items()}}
 
     def valeurs_unites(self, it: int, data: dict) -> dict:
         """Valeur dynamique des unités (points du scoreur) avec le réseau publié (dernier.pt)."""
@@ -724,7 +870,15 @@ class Entraineur:
                 ecrire_phase(self.dir, "apprentissage", it)
             val = self.valider(data) if n and not st.get("amorce") else {}
             self.etat["non_appris"] = self.etat.get("non_appris", 0) + n
-            ap = self.apprendre(it, self.etat["non_appris"])
+            if (cfg.reinit_tous and it - self.etat.get("derniere_reinit", 0) >= cfg.reinit_tous
+                    and self.taille_fenetre() >= cfg.fenetre_min):
+                print(f"Réinitialisation : réseau neuf entraîné sur la fenêtre ({self.taille_fenetre()} "
+                      f"exemples)…", flush=True)
+                ap = self.reinitialiser(it)
+                ap["reinitialisation"] = True
+                self.etat["derniere_reinit"] = it
+            else:
+                ap = self.apprendre(it, self.etat["non_appris"])
             if ap.get("pas"):
                 self.etat["non_appris"] = 0
             if it == cfg.amorce_iterations and cfg.amorce_pas > 0 and self.taille_fenetre() >= cfg.lot:
@@ -770,6 +924,9 @@ def _resume(l: dict) -> str:
     if v:
         s += f"\n           parties inédites : précision valeur {v['precision_valeur']:.2f}, " \
              f"1er coup = cible {v['premier_coup']:.2f}, KL {v['kl']:.3f}"
+        if "logloss_valeur" in v:
+            s += f", log-loss valeur {v['logloss_valeur']:.3f} (recherche {v['logloss_q']:.3f}, " \
+                 f"constante {v['logloss_base']:.3f})"
     t = l["temps"]
     s += f" | {t['autojeu']:.0f}s + {t['apprentissage']:.0f}s"
     if "evaluation" in l:

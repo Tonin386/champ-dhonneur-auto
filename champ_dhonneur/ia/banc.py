@@ -38,7 +38,8 @@ def _positions(n: int = 256):
     return out
 
 
-def banc_inference(cfg_modele, dispositif: str, lots=(64, 128, 256, 512, 1024), repetitions: int = 20):
+def banc_inference(cfg_modele, dispositif: str, lots=(64, 128, 256, 512, 1024, 2048), repetitions: int = 20,
+                   compiler: bool = False):
     """Débit du réseau seul (entrées déjà encodées, comme dans l'auto-jeu du moteur Rust)."""
     import torch
 
@@ -47,13 +48,14 @@ def banc_inference(cfg_modele, dispositif: str, lots=(64, 128, 256, 512, 1024), 
     from .modele import ReseauChamp, nb_parametres
     model = ReseauChamp(cfg_modele)
     n_par = nb_parametres(model)
-    ev = EvaluateurReseau(model, dispositif)
+    ev = EvaluateurReseau(model, dispositif, compiler=compiler)
     pos = _positions(max(lots))
     x_tout, _ = collate([encode_state(g) for g, _ in pos], [encode_actions(g, l) for g, l in pos])
     res = []
     for b in lots:
         x = {k: v[:b] for k, v in x_tout.items()}
-        ev.evaluer_lot(x)
+        for _ in range(3 if compiler else 1):    # compilation et enregistrement des graphes CUDA
+            ev.evaluer_lot(x)
         if ev.device.type == "cuda":
             torch.cuda.synchronize()
         t = time.perf_counter()
@@ -67,40 +69,53 @@ def banc_inference(cfg_modele, dispositif: str, lots=(64, 128, 256, 512, 1024), 
 
 
 def _travailleur_banc(args):
-    chemin, dispositif, params, seed, depart, moteur = args
+    chemin, dispositif, params, seed, depart, moteur, compiler, chauffe = args
     from .entrainement import _init_travailleur
     _init_travailleur()
     import torch
 
-    from .autojeu import jouer
+    from .autojeu import ParamsAutoJeu, jouer
     from .evaluateurs import EvaluateurReseau
-    ev = EvaluateurReseau.depuis_fichier(chemin, dispositif)
+    ev = EvaluateurReseau.depuis_fichier(chemin, dispositif, compiler=compiler)
     ev.evaluer(_positions(8))                 # initialisation CUDA / premiers noyaux
+    if chauffe > 0:     # réseau compilé : une compilation par palier de lot, avant la mesure
+        p0 = ParamsAutoJeu(**asdict(params))
+        p0.duree_max = chauffe
+        jouer(ev, p0, seed + 7, moteur)
     time.sleep(max(0.0, depart - time.time()))
     _, st = jouer(ev, params, seed, moteur)
     mem = torch.cuda.max_memory_allocated() / 2**20 if ev.device.type == "cuda" else 0.0
     return st["evaluations"], st["secondes"], st["decisions"], mem
 
 
-def banc_autojeu(cfg, liste_travailleurs, duree: float = 45.0):
+def banc_autojeu(cfg, liste_travailleurs, duree: float = 45.0, modele: str | None = None):
+    """Débit réel de l'auto-jeu pour chaque nombre de processus. `modele` : un réseau entraîné
+    (parties et lots représentatifs) ; sinon un réseau aléatoire (parties limitées à 25 manches)."""
     import multiprocessing as mp
 
     from .autojeu import ParamsAutoJeu
     from .entrainement import choisir_dispositif
     from .modele import ReseauChamp, sauver
     dispositif = choisir_dispositif(cfg.dispositif_autojeu)
-    tmp = tempfile.mkdtemp(prefix="champ_banc_")
-    chemin = os.path.join(tmp, "modele.pt")
-    sauver(chemin, ReseauChamp(cfg.modele))
+    if modele is None:
+        tmp = tempfile.mkdtemp(prefix="champ_banc_")
+        chemin = os.path.join(tmp, "modele.pt")
+        sauver(chemin, ReseauChamp(cfg.modele))
+    else:
+        chemin = modele
+    compiler = bool(getattr(cfg, "inference_compilee", False)) and dispositif == "cuda"
     lignes = []
     for n in liste_travailleurs:
         p = ParamsAutoJeu(**asdict(cfg.autojeu))
         p.parties = 10_000
         p.duree_max = duree
-        p.max_manches = 25     # réseau aléatoire : on évite les parties interminables
+        if modele is None:
+            p.max_manches = 25     # réseau aléatoire : on évite les parties interminables
+        chauffe = 60.0 if compiler else 0.0
         with ProcessPoolExecutor(n, mp_context=mp.get_context("spawn")) as ex:
-            depart = time.time() + 20 + 2 * n      # tous les processus démarrent ensemble
-            taches = [(chemin, dispositif, p, 1000 + i, depart, cfg.moteur_autojeu) for i in range(n)]
+            depart = time.time() + 20 + 2 * n + chauffe + (60 if compiler else 0)
+            taches = [(chemin, dispositif, p, 1000 + i, depart, cfg.moteur_autojeu, compiler, chauffe)
+                      for i in range(n)]
             res = list(ex.map(_travailleur_banc, taches))
         ev_s = sum(e / max(s, 1e-9) for e, s, _, _ in res)
         sims_moy = p.p_complete * p.simulations + (1 - p.p_complete) * p.simulations_rapides
@@ -112,7 +127,7 @@ def banc_autojeu(cfg, liste_travailleurs, duree: float = 45.0):
     return lignes
 
 
-def executer_banc(cfg, liste_travailleurs=None, duree: float = 45.0) -> dict:
+def executer_banc(cfg, liste_travailleurs=None, duree: float = 45.0, modele: str | None = None) -> dict:
     import torch
 
     from .entrainement import choisir_dispositif, coeurs_physiques, travailleurs_auto
@@ -130,7 +145,10 @@ def executer_banc(cfg, liste_travailleurs=None, duree: float = 45.0) -> dict:
     rust = cfg.moteur_autojeu != "python" and rs.disponible()
     print(f"  Moteur d'auto-jeu : {'Rust (champ_rs)' if rust else 'Python'}")
     print(f"\n1. Réseau seul, entrées déjà encodées ({dispositif}) :")
-    n_par, inf = banc_inference(cfg.modele, dispositif)
+    compiler = bool(getattr(cfg, "inference_compilee", False)) and dispositif == "cuda"
+    n_par, inf = banc_inference(cfg.modele, dispositif, compiler=compiler)
+    if compiler:
+        print("  réseau compilé (inference_compilee)")
     print(f"  réseau : {n_par / 1e6:.2f} M paramètres")
     for r in inf:
         print(f"  lot {r['lot']:>4} : {r['ms_par_lot']:6.2f} ms  → {r['positions_par_s']:9.0f} positions/s")
@@ -142,7 +160,7 @@ def executer_banc(cfg, liste_travailleurs=None, duree: float = 45.0) -> dict:
             liste_travailleurs = sorted({max(1, base // 2), base, base + 1, min(os.cpu_count() or 1, base * 2)})
     print(f"\n2. Auto-jeu réel ({duree:.0f} s par essai, {cfg.autojeu.simultanees} parties simultanées "
           f"par processus) :")
-    lignes = banc_autojeu(cfg, liste_travailleurs, duree)
+    lignes = banc_autojeu(cfg, liste_travailleurs, duree, modele)
     meilleur = max(lignes, key=lambda l: l["evaluations_par_s"])
     # plus petit nombre de processus à 5 % du meilleur débit (moins de chaleur, plus de marge)
     choix = min((l for l in lignes if l["evaluations_par_s"] >= 0.95 * meilleur["evaluations_par_s"]),

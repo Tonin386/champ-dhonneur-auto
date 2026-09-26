@@ -92,7 +92,9 @@ docker compose run --rm banc          # ~5 minutes : mesure et recommandation
 docker compose run --rm entrainement
 ```
 
-`champ banc` affiche le débit d'inférence du GPU selon la taille des lots. Il affiche aussi le
+`champ banc` affiche le débit d'inférence du GPU selon la taille des lots (réseau compilé si
+`inference_compilee` est vrai ; `--modele runs/continu/modeles/meilleur.pt` joue l'essai d'auto-jeu
+avec un réseau entraîné, dont les parties et les lots sont représentatifs). Il affiche aussi le
 débit réel de l'auto-jeu pour plusieurs nombres de processus, puis recommande un nombre de
 processus et estime la charge du GPU :
 
@@ -155,6 +157,7 @@ Valeurs par défaut du code ; `configs/gpu.json` les ajuste pour un GPU. Toutes 
 | `autojeu.m` | 16 | actions candidates Gumbel à la racine |
 | `autojeu.c_visit`, `autojeu.c_scale` | 50, 0,1 | transformation σ des Q (mctx) |
 | `autojeu.meilleur_coup` | false | coup joué = meilleur coup de la recherche, sans bruit (voir « Choix du coup ») |
+| `autojeu.continu` | false | moteur Rust : les parties en cours passent d'une itération à la suivante (avec le nouveau réseau) ; les lots restent pleins jusqu'au bout de l'itération, `autojeu.simultanees` n'est plus plafonné |
 | `modele.d`, `modele.couches`, `modele.tetes`, `modele.ffn` | 192, 6, 6, 4 | taille du transformeur |
 | `lot` | 512 | taille des lots d'apprentissage |
 | `lr`, `lr_min`, `echauffement` | 1e-3, 5e-5, 300 | taux d'apprentissage (cosinus par itération) |
@@ -167,6 +170,13 @@ Valeurs par défaut du code ; `configs/gpu.json` les ajuste pour un GPU. Toutes 
 | `eval_tous`, `eval_paires`, `eval_simulations` | 5, 24, 64 | fréquence et taille des matchs d'évaluation |
 | `eval_ancres` | glouton | adversaires fixes : `glouton`, `heur:64`, `mcts:800`… |
 | `eval_meilleur` | true | le nouveau modèle affronte aussi le meilleur modèle (s'il n'est pas le précédent) |
+| `eval_precedent` | true | le nouveau modèle affronte la version évaluée précédente |
+| `eval_paires_reseaux` | 100 | paires des matchs contre un réseau (moteur Rust) ; `eval_paires` reste celui des bots |
+| `eval_promotion` | elo | `elo` : meilleur.pt = meilleur Elo ; `ic` : promu seulement s'il bat le meilleur (borne basse de l'IC 95 % > 0) |
+| `autojeu_reseau` | dernier | réseau de l'auto-jeu : `dernier` (le plus récent) ou `meilleur` (le meilleur démontré, `meilleur.pt`) |
+| `reinit_tous`, `reinit_reutilisation` | 0, 4 | toutes les N itérations, réseau neuf entraîné depuis zéro sur la fenêtre (voir « Plasticité ») |
+| `valeur_lambda` | 0 | > 0 : retours TD(λ) à la place de la valeur de recherche dans la cible de valeur |
+| `inference_compilee` | false | réseau compilé (`torch.compile`, graphes CUDA) pour l'auto-jeu et les matchs Rust : +40 % de positions/s sur RTX 3070 |
 | `travailleurs_evaluation` | 0 | processus des évaluations (0 = `travailleurs`) ; utile avec le moteur Rust, qui sature le GPU avec peu de processus |
 | `moteur_autojeu` | auto | `auto` (Rust si le module `champ_rs` est compilé), `rust` ou `python` |
 | `iterations` = 0, `lr_horizon` | —, 0 | entraînement sans fin ; décroissance du taux d'apprentissage sur `lr_horizon` itérations, puis `lr_min` |
@@ -205,7 +215,12 @@ Ce qu'il faut surveiller :
   les seules mesures de généralisation. La précision de valeur y doit dépasser nettement 0,5.
   Un grand écart avec la précision sur les exemples d'apprentissage (`préc`) signale un
   sur-apprentissage : augmentez `parties_par_iteration` ou `melange_q`, ou baissez
-  `reutilisation`.
+  `reutilisation`. Les mesures portent sur le modèle publié (poids EMA s'il y en a), celles des
+  poids bruts ont le suffixe `_brut`. La **log-loss de valeur** (`logloss_valeur`) mesure
+  l'étalonnage : elle doit être inférieure à celle d'une prédiction constante (`logloss_base`,
+  ≈ 0,69 sans nulles) et s'approcher de celle de la valeur de la recherche (`logloss_q`). Elle
+  est aussi donnée par tranche de manche (`_m1_3`, `_m4_9`, `_m10`) : en début de partie, le
+  hasard domine, et un réseau trop confiant y fait pire que la constante.
 - **Perte de valeur** d'apprentissage : elle baisse puis se stabilise.
 - **Perte de politique** : elle baisse lentement ; elle n'est pas un bon indicateur de force à
   elle seule (les cibles deviennent plus tranchées quand le réseau progresse).
@@ -218,11 +233,24 @@ champ jouer --blanc humain --noir ia:t=10                       # 10 secondes de
 champ jouer --noir "ia:modele=runs/principal/modeles/iter_0100.pt,t=2"
 champ evaluer runs/principal/modeles/meilleur.pt mcts:800 --paires 50 --dispositif cuda
 champ evaluer runs/principal/modeles/meilleur.pt runs/principal/modeles/iter_0050.pt
+champ evaluer a.pt b.pt --sprt 0,20 --paires 100 --protocole draft   # test séquentiel (moteur Rust)
+champ tournoi a.pt b.pt c.pt "c.pt:simulations=512" --paires 200 --sortie tournoi.json
 champ analyser partie.nch --coup 42                             # meilleurs coups d'une position
 champ analyser partie.nch --coup 42 --duree 30                  # recherche progressive de 30 s
 champ analyser partie.nch --coup 42 --profondeur 12             # jusqu'à la profondeur 12
 champ analyser partie.nch --coup 42 --infini                    # sans fin, une ligne par profondeur (Ctrl-C)
 ```
+
+**Moteur de recherche du bot.** Si le module Rust `champ_rs` est compilé, le bot (`ia…`)
+cherche avec le moteur Rust : la partie est reconstruite dans le moteur Rust à chaque coup
+(`rs.etat_jeu`, `champ_rs.Jeu.depuis_etat`, testé décision par décision contre le moteur
+Python), puis cherchée par vagues de 16 simulations (perte virtuelle). Au temps (`ia:t=2`) et
+dans l'analyse (page Jouer, `champ analyser`), la recherche est progressive comme en Python :
+passes de halving séquentiel de budget doublé sur les meilleurs candidats, l'arbre étant
+conservé (`RechercheJeu.prolonger`), interruptible (analyse infinie) ; les lignes de jeu sont
+les suites les plus visitées de l'arbre Rust. L'horizon affiché est alors la longueur de la plus
+longue ligne principale. Le solveur exact est toujours consulté d'abord. `ia:moteur=python`
+garde la recherche Python.
 
 Le modèle par défaut est cherché dans `$CHAMP_MODELE`, `modeles/meilleur.pt`, puis
 `runs/principal/modeles/meilleur.pt`. Dans l'interface web, le « Bot IA » et le bouton
@@ -272,7 +300,9 @@ Tailles : `cpu-demo` 0,2 M paramètres, défaut 3 M, `gpu.json` 6,5 M (d = 256, 
   défausse cachée de l'adversaire, ordre des pioches) compatible avec ce que sait le joueur,
   puis descend dans un arbre commun indexé par les actions. Sous la racine, sélection PUCT avec
   les a priori du réseau renormalisés sur les actions disponibles, et réduction « first play
-  urgency ».
+  urgency ». Les arêtes sont les actions telles que le joueur les voit : une action face cachée
+  de l'adversaire (passer, recruter, prendre l'Initiative) mène au même nœud quelle que soit la
+  pièce défaussée, que le joueur ignore (`recherche.cle`, testé en Python et en Rust).
 - **Lots.** La recherche est un générateur qui émet des requêtes d'évaluation ; un pilote regroupe
   celles de dizaines de parties en un seul appel GPU. Le bot de jeu lance ses simulations par
   vagues de 8 grâce à la perte virtuelle.
@@ -309,8 +339,8 @@ Tailles : `cpu-demo` 0,2 M paramètres, défaut 3 M, `gpu.json` 6,5 M (d = 256, 
 - Unités tirées au hasard à chaque partie (les 1 820 compositions possibles).
 - Bruit de Gumbel à la racine pour l'exploration.
 - **Playout cap randomization** (KataGo) : 25 % des coups reçoivent une recherche complète et
-  produisent une cible de politique ; les autres sont joués vite et ne servent qu'à la cible de
-  valeur. On joue ainsi environ 3 fois plus de parties pour le même budget.
+  produisent un exemple (cibles de politique et de valeur) ; les autres sont joués vite, sans
+  exemple. On joue ainsi environ 3 fois plus de parties pour le même budget.
 - **Amorçage** : les `amorce_iterations` premières itérations utilisent la recherche guidée par
   l'heuristique existante. À la fin de l'amorçage, `amorce_pas` pas d'apprentissage supervisé
   supplémentaires font imiter cette recherche au réseau. Il démarre ainsi près de son niveau, au
@@ -328,6 +358,24 @@ Tailles : `cpu-demo` 0,2 M paramètres, défaut 3 M, `gpu.json` 6,5 M (d = 256, 
   sur GPU récents (Ampere et suivants), fp16 avec mise à l'échelle des gradients sinon.
 - Fenêtre glissante (`fenetre` exemples) ; chaque exemple est vu environ `reutilisation` fois.
 - `compiler: true` active `torch.compile` (gain de vitesse sur GPU récent).
+- **Retours TD(λ)** (`valeur_lambda` > 0, `ia/cibles.py`) : la valeur de recherche mêlée à la
+  cible de valeur est remplacée par le retour λ de la position, moyenne à poids géométriques des
+  valeurs de recherche des positions suivantes de la même partie (ramenées à son point de vue),
+  puis du résultat final, comme la valeur « à court terme » de KataGo. λ = 0 : valeur de
+  recherche seule ; λ = 1 : résultat final seul. Les exemples d'une partie sont contigus et dans
+  l'ordre ; la colonne `debut` des données marque leur début (déduit de la manche pour les
+  anciens fichiers, qui ne décroît jamais au cours d'une partie).
+
+### Plasticité : réinitialisation périodique
+
+Un réseau entraîné en continu pendant des centaines d'itérations perd sa capacité à bien
+apprendre de nouvelles données (« primacy bias », Nikishin et al. 2022 ; « loss of plasticity »,
+Dohare et al. 2024). Mesuré sur `runs/continu` : sur les parties inédites de l'itération 172, la
+log-loss de valeur du modèle 171 (39 000 pas d'apprentissage) est de 0,73, pire qu'une prédiction
+constante (0,69), alors qu'un réseau neuf entraîné depuis zéro sur la même fenêtre (itérations
+146 à 171, 5 500 pas) atteint 0,58, mieux que la valeur de la recherche elle-même (0,64).
+`reinit_tous: N` entraîne ainsi toutes les N itérations un réseau neuf sur la fenêtre
+(`reinit_reutilisation` passages, échauffement puis décroissance cosinus), qui remplace l'ancien.
 
 ### Évaluation (`evaluation.py`)
 
@@ -336,7 +384,28 @@ Tailles : `cpu-demo` 0,2 M paramètres, défaut 3 M, `gpu.json` 6,5 M (d = 256, 
 - Toutes les `eval_tous` itérations, le nouveau réseau affronte les ancres (`eval_ancres`) et la
   version évaluée précédente.
 - Classement Elo par maximum de vraisemblance (modèle de Bradley-Terry, algorithme MM) sur tous
-  les résultats. `meilleur.pt` est la version au meilleur Elo.
+  les résultats. `meilleur.pt` est la version au meilleur Elo (`eval_promotion: "elo"`), ou
+  (`"ic"`) celle qui a battu le meilleur modèle précédent avec une borne basse de l'intervalle
+  de confiance à 95 % de l'écart Elo supérieure à 0 : un modèle n'est promu que si sa
+  supériorité est démontrée.
+- **Statistiques par paire** : les deux parties d'une graine ne sont pas indépendantes (même
+  tirage, même draft) ; l'incertitude se calcule sur les scores de paires (0, ½, 1, 1½, 2 points,
+  statistique « pentanomiale » de Fishtest). Chaque match donne l'écart Elo et son intervalle de
+  confiance à 95 %. Ordre de grandeur : ±50 Elo avec 100 paires, ±35 avec 200, ±17 avec 800.
+- **Moteur Rust pour les matchs entre réseaux** (`champ_rs.Match`, `evaluation.match_reseaux`) :
+  toutes les parties avancent ensemble, les requêtes de chaque camp forment un lot GPU par réseau
+  (un seul si les deux camps ont le même). Les agents jouent comme le bot : meilleur coup, sans
+  bruit, 32 candidats, coup gagnant toujours joué (le solveur exact du bot n'est pas porté).
+  `eval_paires_reseaux` paires contre chaque adversaire réseau ; les ancres peuvent être des
+  modèles figés (`eval_ancres: ["glouton", "ancres/iter_0171.pt"]`, hors de `modeles/` dont les
+  anciens fichiers sont purgés).
+- **Test séquentiel (SPRT)** : `champ evaluer a.pt b.pt --sprt 0,20` joue des tranches de
+  `--paires` paires jusqu'à décider entre H0 (écart ≤ 0) et H1 (écart ≥ 20 Elo), risques 5 %
+  (approximation GSPRT sur les scores de paires). C'est la façon de valider un changement de la
+  recherche à réseau égal : `--agent-b cle_publique=false`, `--agent-a c_scale=0.2`…
+- **Tournoi** : `champ tournoi a.pt b.pt "a.pt:simulations=512" glouton --paires 200` fait jouer
+  toutes les paires sur les mêmes graines et affiche la matrice des résultats (pas seulement un
+  Elo : une relation non transitive s'y voit) et le classement Bradley-Terry.
 
 ## Génération 2 : draft, cibles auxiliaires, valeur des unités
 
@@ -387,12 +456,14 @@ parties/heure).
 
 ## Pistes pour aller plus loin
 
-- **Moteur en Rust (PyO3)** : c'est le facteur ×20 à ×50 sur le débit d'auto-jeu. L'interface à
-  reproduire est petite (`legal_actions`, `apply`, `determinize`, `encode_state`).
 - **Serveur d'inférence central** (un seul processus sur le GPU qui reçoit les requêtes de tous
-  les processus d'auto-jeu) pour de plus gros réseaux.
-- **Solveur exact du draft** : minimax doux sur les 70 répartitions évaluées par le réseau (≈ 290
-  évaluations au lieu de ≈ 560), en remplacement du MCTS aux décisions de draft.
-- **Inférence** : CUDA graphs par paliers de taille de lot, double tampon CPU/GPU, TensorRT.
+  les processus d'auto-jeu) pour de plus gros réseaux ; avancée des parties d'auto-jeu en
+  plusieurs fils (déjà fait pour les matchs, `matchs.rs`).
+- **Solveur exact du draft** : minimax sur les répartitions finales des 8 cartes (au plus 70),
+  chacune évaluée par le réseau à la première décision de la manche 1 sur plusieurs tirages des
+  sacs, en un seul lot, en remplacement du MCTS aux décisions de draft.
+- **Analyse en Rust** : approfondissement itératif et lignes de jeu dans le moteur Rust (l'état
+  s'importe déjà, `Jeu.depuis_etat`), pour la page Jouer.
+- **Inférence** : double tampon CPU/GPU, TensorRT.
 - **Déterminisations pondérées** par la tête de croyance sur la main adverse.
 - **4 joueurs** : l'encodage actuel est spécifique au plateau 2J.

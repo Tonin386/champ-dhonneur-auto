@@ -146,7 +146,9 @@ def encode_state(g: Game) -> dict[str, np.ndarray]:
     gf[16] = 1.0 if ROYAL in (opp.bag + opp.hand + opp.disc_down) else 0.0
     gf[17] = 1.0 if ROYAL in opp.disc_up else 0.0
     gf[18] = min(g.round, 100) / 50.0
-    gf[19] = g.round / g.max_rounds
+    # constante fixe, pas g.max_rounds : la limite diffère entre auto-jeu (100) et jeu (150), et
+    # la même position doit s'encoder pareil ; 100 = limite de l'auto-jeu des modèles existants
+    gf[19] = g.round / 100.0
     gf[20] = 1.0 if g.current == p else 0.0
     gf[21] = sum(1 for loc in SPEC.locations if g.control[loc] is None) / 10.0
     if dr is not None:

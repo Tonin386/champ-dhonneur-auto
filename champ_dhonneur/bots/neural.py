@@ -5,7 +5,12 @@ Spécification (via make_bot) :
     ia:800                   800 simulations
     ia:t=2                   2 secondes par décision (recherche progressive)
     ia:modele=runs/x/modeles/meilleur.pt,sims=400,dispositif=cuda
+    ia:moteur=python         recherche du moteur Python (défaut : Rust si le module est compilé)
     heur:200                 même recherche, évaluée par l'heuristique (sans réseau)
+
+Avec le moteur Rust (`champ_rs`), la partie est reconstruite dans le moteur Rust à chaque coup
+et cherchée par vagues de `PARALLELE_RUST` simulations : bien plus de simulations par seconde
+que la recherche Python (voir docs/IA.md). L'analyse (lignes de jeu) reste en Python.
 
 Le modèle par défaut est cherché dans $CHAMP_MODELE, puis modeles/meilleur.pt,
 puis runs/continu/modeles/meilleur.pt et runs/principal/modeles/meilleur.pt.
@@ -20,6 +25,7 @@ from ..engine import Action, Game
 from .base import Bot
 
 DEFAUTS = ["modeles/meilleur.pt", "runs/continu/modeles/meilleur.pt", "runs/principal/modeles/meilleur.pt"]
+PARALLELE_RUST = 16   # simulations par vague (perte virtuelle) de la recherche Rust du bot
 _CACHE: dict[tuple, object] = {}
 _VERSIONS: dict[tuple, bool] = {}
 
@@ -57,10 +63,14 @@ class NeuralBot(Bot):
 
     def __init__(self, modele: str | None = None, simulations: int = 200,
                  temps: float | None = None, dispositif: str | None = None, heuristique: bool = False,
-                 seed: int | None = None):
+                 seed: int | None = None, moteur: str = "auto"):
         super().__init__(seed)
+        from ..ia import rs
         from ..ia.recherche import RechercheGumbel
         self.simulations, self.temps = simulations, temps
+        if moteur == "rust" and not rs.disponible():
+            raise RuntimeError("moteur Rust demandé mais indisponible (module champ_rs absent ?)")
+        self.rust = moteur != "python" and not heuristique and rs.disponible()
         dispositif = dispositif or os.environ.get("CHAMP_DISPOSITIF", "cpu")
         if heuristique:
             from ..ia.evaluateurs import EvaluateurHeuristique
@@ -102,6 +112,14 @@ class NeuralBot(Bot):
             if mat and mat["equipe"] == game.team(game.to_move) and mat["action"] is not None:
                 self.mat = mat
                 return mat["action"]
+        if self.rust:
+            from ..ia import rs
+            agent = {"parallele": PARALLELE_RUST}
+            graine = self.rng.randrange(2**62)
+            res = (rs.rechercher_temps(game, self.ev, self.temps, agent, graine) if self.temps
+                   else rs.rechercher(game, self.ev, self.simulations, agent, graine))
+            self.derniere = res
+            return res.action
         if self.temps:
             gen = self.recherche.approfondir(game, Limite(secondes=self.temps))
         else:
@@ -140,6 +158,8 @@ def depuis_spec(arg: str, seed: int | None, heuristique: bool = False) -> Neural
             kw["modele"] = v
         elif k in ("dispositif", "device"):
             kw["dispositif"] = v
+        elif k == "moteur":
+            kw["moteur"] = v
         else:
             raise ValueError(f"Option de bot IA inconnue : {k}")
     return NeuralBot(heuristique=heuristique, seed=seed, **kw)

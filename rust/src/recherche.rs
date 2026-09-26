@@ -4,10 +4,26 @@
 //! reçoit les réponses du réseau (logits, valeur) : [`Recherche::nouvelle`] renvoie la requête
 //! de la racine, puis chaque appel à [`Recherche::repondre`] renvoie les requêtes suivantes ; une
 //! liste vide signifie que la recherche est terminée (voir [`Recherche::resultat`]).
+//!
+//! Comme en Python, une action face cachée d'un autre joueur que l'observateur mène au même
+//! nœud quelle que soit la pièce défaussée ([`cle`]) : l'observateur ne la voit pas.
 
 use crate::encodage::{encoder_actions, encoder_etat, Observation};
-use crate::moteur::{Action, Partie, CONTROL};
+use crate::moteur::{Action, Partie, CONTROL, INITIATIVE, PASS, RECRUIT};
 use crate::rng::Rapide;
+
+/// Pièce d'une action face cachée d'un autre joueur, inconnue de l'observateur.
+pub const PIECE_CACHEE: u8 = u8::MAX;
+
+/// Arête de l'arbre pour une action d'un autre joueur que l'observateur (voir `recherche.cle`).
+#[inline]
+pub fn cle(a: &Action) -> Action {
+    if matches!(a.genre, INITIATIVE | RECRUIT | PASS) {
+        Action { piece: PIECE_CACHEE, ..*a }
+    } else {
+        *a
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct ParamsRecherche {
@@ -25,6 +41,12 @@ pub struct ParamsRecherche {
     pub bruit_coup: bool,
     /// un coup qui gagne immédiatement est toujours joué
     pub coup_gagnant: bool,
+    /// arêtes face cachée des autres joueurs sans la pièce ([`cle`]) ; faux : ancienne recherche,
+    /// qui voit la pièce (comparaisons seulement)
+    pub cle_publique: bool,
+    /// > 0 : choix de carte exact pendant le draft (`draft.rs`), avec ce nombre de tirages des
+    /// sacs par répartition finale ; 0 : recherche Gumbel aussi pendant le draft
+    pub draft_exact: usize,
 }
 
 impl Default for ParamsRecherche {
@@ -41,6 +63,8 @@ impl Default for ParamsRecherche {
             perte_virtuelle: 1.0,
             bruit_coup: true,
             coup_gagnant: false,
+            cle_publique: true,
+            draft_exact: 0,
         }
     }
 }
@@ -108,6 +132,8 @@ pub struct Recherche {
     cand: Vec<usize>,
     n_phases: usize,
     n_sims: usize,
+    /// budget de la passe en cours (recherche progressive : voir `prolonger`)
+    budget: usize,
     utilisees: usize,
     taches: Vec<usize>,
     pos_tache: usize,
@@ -124,7 +150,7 @@ fn softmax(x: &[f64]) -> Vec<f64> {
     e.into_iter().map(|v| v / s).collect()
 }
 
-fn requete(g: &Partie, legal: &[Action]) -> Requete {
+pub(crate) fn requete(g: &Partie, legal: &[Action]) -> Requete {
     let mut actions = Vec::with_capacity(legal.len() * 7);
     encoder_actions(g, legal, &mut actions);
     Requete { obs: encoder_etat(g), actions, n_act: legal.len() }
@@ -153,6 +179,7 @@ impl Recherche {
             cand: Vec::new(),
             n_phases: 1,
             n_sims: simulations,
+            budget: simulations,
             utilisees: 0,
             taches: Vec::new(),
             pos_tache: 0,
@@ -166,6 +193,23 @@ impl Recherche {
 
     /// Transmet les réponses (logits des actions légales, valeur) aux requêtes précédentes.
     pub fn repondre(&mut self, reponses: &[(&[f32], f32)]) -> Vec<Requete> {
+        self.recevoir(reponses);
+        self.avancer()
+    }
+
+    /// Arrêt demandé en cours de passe : transmet les réponses aux dernières requêtes, puis
+    /// calcule le résultat sans lancer d'autres simulations.
+    pub fn repondre_et_terminer(&mut self, reponses: &[(&[f32], f32)]) {
+        self.recevoir(reponses);
+        if self.resultat.is_none() {
+            self.utilisees += self.pos_tache.min(self.taches.len());
+            self.taches.clear();
+            self.pos_tache = 0;
+            self.terminer();
+        }
+    }
+
+    fn recevoir(&mut self, reponses: &[(&[f32], f32)]) {
         if !self.racine_evaluee {
             self.racine_evaluee = true;
             let (lg, v) = reponses[0];
@@ -183,7 +227,60 @@ impl Recherche {
                 self.retropropager(&sim.chemin, sim.signe * v as f64);
             }
         }
+    }
+
+    /// Recherche progressive : nouvelle passe de halving séquentiel de `budget` simulations sur les
+    /// `candidats` meilleurs coups du moment, l'arbre étant conservé (comme `approfondir` en
+    /// Python). À appeler une fois la passe précédente terminée ; renvoie ses premières requêtes
+    /// (vide : rien à chercher, le résultat est à jour).
+    pub fn prolonger(&mut self, budget: usize, candidats: usize) -> Vec<Requete> {
+        let k = self.legal.len();
+        if k <= 1 || budget == 0 || self.noeuds.is_empty() || !self.attente.is_empty() {
+            return Vec::new();
+        }
+        let q = self.q_complete();
+        let sig = self.sigma(&q);
+        let sc: Vec<f64> = (0..k).map(|i| self.gumbel[i] + self.logits[i] + sig[i]).collect();
+        let mut idx: Vec<usize> = (0..k).collect();
+        idx.sort_by(|&a, &b| sc[b].partial_cmp(&sc[a]).unwrap());
+        idx.truncate(candidats.clamp(1, k));
+        self.cand = idx;
+        self.n_phases = 1usize.max((self.cand.len() as f64).log2().ceil() as usize);
+        self.n_sims = self.utilisees + budget;
+        self.budget = budget;
+        self.resultat = None;
+        self.phase();
         self.avancer()
+    }
+
+    /// Ligne principale après chaque coup de la racine : suite des coups les plus visités (au
+    /// moins 2 visites), avec leurs visites, jusqu'à `profondeur` décisions.
+    pub fn lignes(&self, profondeur: usize) -> Vec<Vec<(Action, f64)>> {
+        (0..self.legal.len())
+            .map(|i| {
+                let mut out = Vec::new();
+                if self.noeuds.len() <= i + 1 {
+                    return out;
+                }
+                let mut nd = &self.noeuds[i + 1];
+                while out.len() < profondeur {
+                    let Some(&(a, c)) = nd
+                        .enfants
+                        .iter()
+                        .max_by(|x, y| self.noeuds[x.1 as usize].n.partial_cmp(&self.noeuds[y.1 as usize].n).unwrap())
+                    else {
+                        break;
+                    };
+                    let ch = &self.noeuds[c as usize];
+                    if ch.n < 2.0 {
+                        break;
+                    }
+                    out.push((a, ch.n));
+                    nd = ch;
+                }
+                out
+            })
+            .collect()
     }
 
     fn initialiser(&mut self, lg: &[f32], v_hat: f64) {
@@ -220,7 +317,7 @@ impl Recherche {
     fn phase(&mut self) {
         let nc = self.cand.len();
         let reste = self.n_sims - self.utilisees;
-        let per = if nc <= 2 { (reste + nc - 1) / nc } else { 1usize.max(self.n_sims / (self.n_phases * nc)) };
+        let per = if nc <= 2 { (reste + nc - 1) / nc } else { 1usize.max(self.budget / (self.n_phases * nc)) };
         self.taches.clear();
         'dehors: for _ in 0..per {
             for &i in &self.cand {
@@ -299,6 +396,7 @@ impl Recherche {
             g.actions_legales(&mut legal);
             let tm = g.equipe(g.au_trait());
             let s = if tm == 0 { 1.0 } else { -1.0 };
+            let autre = self.p.cle_publique && g.au_trait() != self.moi;
             let a = if legal.len() > 1 {
                 let complet = match &self.noeuds[noeud as usize].logits {
                     None => false,
@@ -310,16 +408,17 @@ impl Recherche {
                     self.tampon = legal;
                     return Some(r);
                 }
-                self.puct(noeud, &legal, s)
+                self.puct(noeud, &legal, s, autre)
             } else {
                 legal[0]
             };
-            let ch = match self.noeuds[noeud as usize].enfant(&a) {
+            let k = if autre { cle(&a) } else { a };
+            let ch = match self.noeuds[noeud as usize].enfant(&k) {
                 Some(c) => c,
                 None => {
                     let c = self.noeuds.len() as u32;
                     self.noeuds.push(Noeud::new(tm));
-                    self.noeuds[noeud as usize].enfants.push((a, c));
+                    self.noeuds[noeud as usize].enfants.push((k, c));
                     c
                 }
             };
@@ -348,21 +447,27 @@ impl Recherche {
         }
     }
 
-    fn puct(&self, noeud: u32, legal: &[Action], s: f64) -> Action {
+    /// Sélection PUCT. `autre` : un autre joueur que l'observateur est au trait ; ses actions
+    /// face cachée qui ne diffèrent que par la pièce partagent alors un même enfant ([`cle`]).
+    fn puct(&self, noeud: u32, legal: &[Action], s: f64, autre: bool) -> Action {
         let nd = &self.noeuds[noeud as usize];
         let lg = nd.logits.as_ref().unwrap();
         let vals: Vec<f64> = legal.iter().map(|a| logit(lg, a).unwrap() as f64).collect();
         let mx = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let ex: Vec<f64> = vals.iter().map(|v| (v - mx).exp()).collect();
         let z: f64 = ex.iter().sum();
-        let enfants: Vec<Option<&Noeud>> =
-            legal.iter().map(|a| nd.enfant(a).map(|i| &self.noeuds[i as usize])).collect();
+        let indices: Vec<Option<u32>> =
+            legal.iter().map(|a| if autre { nd.enfant(&cle(a)) } else { nd.enfant(a) }).collect();
+        let enfants: Vec<Option<&Noeud>> = indices.iter().map(|i| i.map(|i| &self.noeuds[i as usize])).collect();
         let (mut tot, mut masse) = (0.0, 0.0);
         for (i, ch) in enfants.iter().enumerate() {
             if let Some(c) = ch {
                 if c.n > 0.0 {
-                    tot += c.n;
                     masse += ex[i];
+                    // enfant partagé par plusieurs actions : ses visites ne comptent qu'une fois
+                    if !indices[..i].contains(&indices[i]) {
+                        tot += c.n;
+                    }
                 }
             }
         }
@@ -478,5 +583,48 @@ impl Recherche {
             v_reseau: self.v_hat,
             simulations: self.utilisees,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Les arêtes face cachée de l'adversaire n'ont pas de pièce ; celles de l'observateur, si.
+    #[test]
+    fn aretes_face_cachee_sans_piece_pour_l_adversaire() {
+        let mut adverses = 0;
+        for graine in 0..8u64 {
+            let mut g = Partie::nouvelle(graine, None, None, 100);
+            let mut legal = Vec::new();
+            for k in 0..(10 + 3 * graine as usize) {
+                if g.e.fini {
+                    break;
+                }
+                g.actions_legales(&mut legal);
+                let a = legal[(7 * k + graine as usize) % legal.len()];
+                g.jouer(&a).unwrap();
+            }
+            if g.e.fini {
+                continue;
+            }
+            let p = ParamsRecherche { bruit: false, ..Default::default() };
+            let (mut r, mut req) = Recherche::nouvelle(&g, 300, p, graine);
+            while !req.is_empty() {
+                let zeros: Vec<Vec<f32>> = req.iter().map(|q| vec![0.0; q.n_act]).collect();
+                let rep: Vec<(&[f32], f32)> = zeros.iter().map(|z| (z.as_slice(), 0.0f32)).collect();
+                req = r.repondre(&rep);
+            }
+            for nd in &r.noeuds {
+                for (a, c) in &nd.enfants {
+                    if matches!(a.genre, INITIATIVE | RECRUIT | PASS) {
+                        let adverse = r.noeuds[*c as usize].equipe != r.equipe;
+                        assert_eq!(a.piece == PIECE_CACHEE, adverse, "{:?}", a);
+                        adverses += adverse as usize;
+                    }
+                }
+            }
+        }
+        assert!(adverses > 0, "aucune action face cachée adverse explorée");
     }
 }

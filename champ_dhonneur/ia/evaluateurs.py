@@ -55,9 +55,19 @@ class EvaluateurReseau(Evaluateur):
     Sur GPU, les poids sont convertis une fois pour toutes en bf16 (fp16 si le GPU ne gère
     pas bf16) : moins de noyaux lancés qu'avec autocast, ce qui compte pour les petits lots
     de l'auto-jeu. L'évaluateur prend possession du modèle qu'on lui confie.
+
+    `compiler` (GPU) : réseau compilé (`torch.compile`, graphes CUDA). Les lots sont complétés
+    jusqu'à des tailles fixes (`PALIERS_LOT` × `PALIERS_ACTIONS`), une compilation par palier ;
+    mesuré sur RTX 3070 : +40 % de positions/s, sorties aussi proches du calcul fp32 qu'en
+    exécution directe. `recharger` copie de nouveaux poids en place, sans recompiler.
     """
 
-    def __init__(self, model, device: str = "cpu", demi_precision: bool | None = None):
+    PALIERS_LOT = (128, 256, 512, 1024, 2048, 4096)
+    PALIERS_ACTIONS = (16, 32, 64)
+    LOT_MAX = 8192   # au-delà (draft exact de centaines de parties à la fois…), évaluation par morceaux
+
+    def __init__(self, model, device: str = "cpu", demi_precision: bool | None = None,
+                 compiler: bool = False):
         import torch
 
         from .encodage import collate, encode_actions, encode_state
@@ -72,14 +82,28 @@ class EvaluateurReseau(Evaluateur):
             if demi_precision:
                 self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         self.model = model.to(self.device, dtype=self.dtype).eval()
+        self.compile = None
+        if compiler and self.device.type == "cuda":
+            self.compile = torch.compile(self.model, mode="reduce-overhead", dynamic=False)
         self.n_evals = 0
         self.n_lots = 0
 
     @classmethod
-    def depuis_fichier(cls, path, device: str = "cpu"):
+    def depuis_fichier(cls, path, device: str = "cpu", compiler: bool = False):
         from .modele import charger
         model, _ = charger(path, "cpu")
-        return cls(model, device)
+        return cls(model, device, compiler=compiler)
+
+    def recharger(self, path) -> bool:
+        """Copie en place les poids d'un autre fichier de même architecture (graphes compilés
+        conservés). Renvoie faux si l'architecture diffère : il faut alors un nouvel évaluateur."""
+        from .modele import charger
+        model, _ = charger(path, "cpu")
+        if model.cfg != self.model.cfg:
+            return False
+        with self.torch.no_grad():
+            self.model.load_state_dict(model.state_dict())
+        return True
 
     def evaluer(self, requetes):
         if not requetes:
@@ -97,6 +121,20 @@ class EvaluateurReseau(Evaluateur):
 
         Utilisé directement par l'auto-jeu du moteur Rust, qui encode lui-même les positions.
         """
+        b, a_len = x["acts"].shape[:2]
+        if b > self.LOT_MAX:     # mémoire bornée : les très grands lots sont évalués par morceaux
+            n = self.LOT_MAX
+            parts = [self.evaluer_lot({k: v[i:i + n] for k, v in x.items()}) for i in range(0, b, n)]
+            return np.concatenate([p[0] for p in parts]), np.concatenate([p[1] for p in parts])
+        fwd = self.model
+        if self.compile is not None and a_len <= self.PALIERS_ACTIONS[-1]:
+            if b > self.PALIERS_LOT[-1]:     # lot trop grand : par morceaux
+                n = self.PALIERS_LOT[-1]
+                parts = [self.evaluer_lot({k: v[i:i + n] for k, v in x.items()}) for i in range(0, b, n)]
+                return np.concatenate([p[0] for p in parts]), np.concatenate([p[1] for p in parts])
+            x = _completer(x, next(p for p in self.PALIERS_LOT if p >= b),
+                           next(p for p in self.PALIERS_ACTIONS if p >= a_len))
+            fwd = self.compile
         torch = self.torch
         with torch.inference_mode():
             xt = {}
@@ -106,13 +144,29 @@ class EvaluateurReseau(Evaluateur):
                 if t.is_floating_point():
                     t = t.to(self.dtype)
                 xt[k] = t.to(self.device, non_blocking=True)
-            logits, vlog = self.model(xt)
-            p = torch.softmax(vlog.float(), dim=-1)
+            logits, vlog = fwd(xt)
+            p = torch.softmax(vlog[:b].float(), dim=-1)
             v = (p[:, 0] - p[:, 2]).cpu().numpy()
-            logits = logits.float().cpu().numpy()
+            logits = logits[:b, :a_len].float().cpu().numpy()
         self.n_evals += len(v)
         self.n_lots += 1
         return logits, v
+
+
+def _completer(x: dict, b: int, a_len: int) -> dict:
+    """Lot complété jusqu'à b positions et a_len actions (lignes et actions factices, ignorées)."""
+    from .encodage import NONE_CELL
+    out = {}
+    for k, v in x.items():
+        forme = (b, a_len, *v.shape[2:]) if k == "acts" else (b, *v.shape[1:])
+        p = np.zeros(forme, v.dtype)
+        if k == "acts":
+            p[..., 4:] = NONE_CELL
+            p[:len(v), :v.shape[1]] = v
+        else:
+            p[:len(v)] = v
+        out[k] = p
+    return out
 
 
 def activer_tf32() -> None:

@@ -14,6 +14,11 @@ Combine deux idées récentes :
   partagé indexé par les actions. Sous la racine, la sélection est PUCT avec
   a priori du réseau renormalisés sur les actions disponibles.
 
+  Les arêtes de l'arbre sont les actions telles que l'observateur les voit : une action face
+  cachée d'un autre joueur (passer, recruter, prendre l'Initiative) mène au même nœud quelle que
+  soit la pièce défaussée (`cle`), puisque l'observateur ne la voit pas. Sinon, ses décisions plus
+  bas dans l'arbre dépendraient d'une pièce qu'il ignore (planification clairvoyante).
+
 Une simulation s'arrête dès qu'elle atteint une position dont les actions
 légales n'ont pas toutes été évaluées : le réseau est alors interrogé (une
 évaluation par simulation, comme AlphaZero).
@@ -49,7 +54,15 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..engine import CONTROL, Action, Game
+from ..engine import CONTROL, FACE_DOWN, Action, Game
+
+CACHEE = "?"   # pièce d'une action face cachée d'un autre joueur, inconnue de l'observateur
+
+
+def cle(a: Action) -> Action:
+    """Arête de l'arbre pour une action d'un autre joueur que l'observateur : sans la pièce si
+    elle est jouée face cachée (l'unité recrutée, elle, est montrée)."""
+    return a._replace(coin=CACHEE) if a.kind in FACE_DOWN else a
 
 
 @dataclass
@@ -68,6 +81,9 @@ class ParamsRecherche:
     # qu'à choisir les candidats explorés) ; True = tiré avec le bruit de Gumbel (exploration)
     bruit_coup: bool = True
     coup_gagnant: bool = False   # un coup qui gagne immédiatement est toujours joué
+    # arêtes face cachée des autres joueurs sans la pièce (`cle`) ; False : ancienne recherche,
+    # qui voit la pièce (comparaisons seulement)
+    cle_publique: bool = True
     max_noeuds: int = 250_000    # recherche progressive : au-delà, l'arbre est élagué (≈ 3 Ko par nœud)
 
 
@@ -416,6 +432,7 @@ class RechercheGumbel:
             legal = g.legal_actions()
             tm = g.team(g.to_move)
             s = 1.0 if tm == 0 else -1.0
+            autre = P.cle_publique and g.to_move != me
             if len(legal) > 1:
                 lg = node.logits
                 if lg is None or any(a not in lg for a in legal):
@@ -427,12 +444,13 @@ class RechercheGumbel:
                             lg[a] = float(l)
                     v0 = s * v
                     break
-                a = self._puct(node, legal, lg, s)
+                a = self._puct(node, legal, lg, s, autre)
             else:
                 a = legal[0]
-            ch = node.enfants.get(a)
+            k = cle(a) if autre else a
+            ch = node.enfants.get(k)
             if ch is None:
-                ch = node.enfants[a] = Noeud(tm)
+                ch = node.enfants[k] = Noeud(tm)
                 if stats is not None:
                     stats.noeuds += 1
             if not g.pending:
@@ -454,24 +472,31 @@ class RechercheGumbel:
             nd.n += 1
             nd.w0 += v0
 
-    def _puct(self, node: Noeud, legal: list[Action], lg: dict, s: float) -> Action:
+    def _puct(self, node: Noeud, legal: list[Action], lg: dict, s: float, autre: bool = False) -> Action:
+        """Sélection PUCT. `autre` : un autre joueur que l'observateur est au trait ; ses actions
+        face cachée qui ne diffèrent que par la pièce partagent alors un même enfant (`cle`)."""
         mx = max(lg[a] for a in legal)
         ex = [math.exp(lg[a] - mx) for a in legal]
         z = sum(ex)
         tot = 0.0
         mass = 0.0
         kids = node.enfants
-        for i, a in enumerate(legal):
-            ch = kids.get(a)
+        enfants = [kids.get(cle(a)) for a in legal] if autre else [kids.get(a) for a in legal]
+        vus = set() if autre else None
+        for i, ch in enumerate(enfants):
             if ch is not None and ch.n > 0:
-                tot += ch.n
                 mass += ex[i]
+                if vus is not None:
+                    if id(ch) in vus:
+                        continue
+                    vus.add(id(ch))
+                tot += ch.n
         parent_q = s * node.w0 / node.n if node.n > 0 else 0.0
         fpu = parent_q - self.p.fpu * math.sqrt(mass / z)
         c = self.p.c_puct * math.sqrt(max(tot, 1.0)) / z
         best, best_u = legal[0], -math.inf
         for i, a in enumerate(legal):
-            ch = kids.get(a)
+            ch = enfants[i]
             if ch is not None and ch.n > 0:
                 u = s * ch.w0 / ch.n + c * ex[i] / (1.0 + ch.n)
             else:

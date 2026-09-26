@@ -7,7 +7,9 @@
 //! Les tableaux passent sous forme de `bytes` (petit-boutiste), lus avec `numpy.frombuffer`.
 
 mod autojeu;
+mod draft;
 mod encodage;
+mod matchs;
 mod moteur;
 mod plateau;
 mod recherche;
@@ -17,8 +19,13 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 
-use autojeu::{AutoJeu as AutoJeuRs, ParamsAutoJeu};
-use moteur::{code_lettre, lettre, Action, Partie, N_TYPES};
+use autojeu::{assembler_lot, AutoJeu as AutoJeuRs, Lot, ParamsAutoJeu};
+use matchs::{Match as MatchRs, ParamsMatch};
+use moteur::{code_lettre, lettre, Action, Attente, Case, Partie, Pile, N_CARTES, N_TYPES};
+use plateau::N_CASES;
+use rng::{Pioche, Rapide};
+use draft::Moteur;
+use recherche::{ParamsRecherche, Requete};
 
 type ActionPy = (u8, u8, u8, u8, Vec<u8>);
 
@@ -166,6 +173,94 @@ impl Jeu {
          o.glob_f.to_vec(), acts)
     }
 
+    /// Partie reconstruite depuis un état complet : même format que `etat` (les zones de pièces
+    /// dans l'ordre), plus le draft (« draft », « cartes », « etape_draft », « choisit »). Permet
+    /// de chercher avec le moteur Rust depuis une partie du moteur Python (bot, analyse) ; les
+    /// pioches futures sont tirées par un générateur rapide de graine `graine`.
+    #[staticmethod]
+    #[pyo3(signature = (etat, max_manches=150, graine=0))]
+    fn depuis_etat(etat: &Bound<'_, PyDict>, max_manches: u16, graine: u64) -> PyResult<Jeu> {
+        let codes = |s: &str| -> PyResult<Vec<u8>> {
+            s.bytes().map(|b| code_lettre(b).ok_or_else(|| PyValueError::new_err(format!("pièce inconnue : {}", b as char)))).collect()
+        };
+        let requis = |k: &str| -> PyResult<Bound<'_, PyAny>> {
+            etat.get_item(k)?.ok_or_else(|| PyValueError::new_err(format!("état incomplet : {k}")))
+        };
+        let mut p = Partie::nouvelle(graine, Some([[1, 2, 3, 4], [5, 6, 7, 8]]), Some(0), max_manches);
+        p.rng = Pioche::Rapide(Rapide::new(graine));
+        let e = &mut p.e;
+        let unites: Vec<String> = requis("unites")?.extract()?;
+        #[allow(clippy::type_complexity)]
+        let joueurs: Vec<(String, String, String, String, Vec<(String, i8)>, Vec<(String, i8)>)> =
+            requis("joueurs")?.extract()?;
+        if unites.len() != 2 || joueurs.len() != 2 {
+            return Err(PyValueError::new_err("deux joueurs attendus"));
+        }
+        for (i, j) in e.joueurs.iter_mut().enumerate() {
+            let mut u = codes(&unites[i])?;
+            u.sort();
+            j.equipe = i as u8;
+            j.unites = [0; 4];
+            j.unites[..u.len()].copy_from_slice(&u);
+            j.n_unites = u.len() as u8;
+            let (sac, main, dv, dc, res, perdues) = &joueurs[i];
+            j.sac = Pile::from_slice(&codes(sac)?);
+            j.main = Pile::from_slice(&codes(main)?);
+            j.def_visible = Pile::from_slice(&codes(dv)?);
+            j.def_cachee = Pile::from_slice(&codes(dc)?);
+            j.reserve = [0; N_TYPES];
+            for (l, n) in res {
+                j.reserve[codes(l)?[0] as usize] = *n;
+            }
+            j.perdues = [0; N_TYPES];
+            for (l, n) in perdues {
+                j.perdues[codes(l)?[0] as usize] = *n;
+            }
+        }
+        e.cases = [Case::default(); N_CASES];
+        e.ordre = Pile::new();
+        let plat: Vec<(u8, u8, String, u8)> = requis("plateau")?.extract()?;
+        for (pos, proprio, genre, pieces) in plat {
+            e.cases[pos as usize] = Case { occupee: true, proprio, genre: codes(&genre)?[0], pieces };
+            e.ordre.push(pos);
+        }
+        e.controle = [-1; N_CASES];
+        let controle: Vec<(u8, i8)> = requis("controle")?.extract()?;
+        for (l, c) in controle {
+            e.controle[l as usize] = c;
+        }
+        let marqueurs: Vec<i8> = requis("marqueurs")?.extract()?;
+        e.marqueurs = [marqueurs[0], marqueurs[1]];
+        e.premier = requis("premier")?.extract()?;
+        e.initiative = requis("initiative")?.extract()?;
+        e.init_bougee = requis("init_bougee")?.extract()?;
+        e.premier_manche = requis("premier_manche")?.extract()?;
+        e.manche = requis("manche")?.extract()?;
+        e.courant = requis("courant")?.extract()?;
+        e.gagnant = requis("gagnant")?.extract()?;
+        e.fini = requis("fini")?.extract()?;
+        let attentes: Vec<(u8, u8, i8, u8, bool, Vec<u8>)> = requis("attentes")?.extract()?;
+        e.n_attentes = attentes.len() as u8;
+        for (k, (genre, joueur, pos, piece, pioche, positions)) in attentes.into_iter().enumerate() {
+            let mut pp = [0u8; 2];
+            pp[..positions.len()].copy_from_slice(&positions);
+            e.attentes[k] = Attente { genre, joueur, pos, piece, pioche, positions: pp, npos: positions.len() as u8 };
+        }
+        e.max_manches = max_manches;
+        e.graine = graine;
+        e.draft = lire(etat, "draft", false)?;
+        e.en_draft = requis("en_draft")?.extract()?;
+        let cartes: String = lire(etat, "cartes", String::new())?;
+        e.cartes = [0; N_CARTES];
+        let c = codes(&cartes)?;
+        e.cartes[..c.len().min(N_CARTES)].copy_from_slice(&c[..c.len().min(N_CARTES)]);
+        let dispo: String = requis("dispo")?.extract()?;
+        e.dispo = codes(&dispo)?.iter().fold(0u16, |m, &u| m | 1 << (u - 1));
+        e.etape_draft = lire(etat, "etape_draft", 0u8)?;
+        e.choisit = lire(etat, "choisit", 0u8)?;
+        Ok(Jeu { p })
+    }
+
     fn determiniser(&self, observateur: u8, graine: u64) -> Jeu {
         let mut r = rng::Rapide::new(graine);
         Jeu { p: self.p.determiniser(observateur, &mut r) }
@@ -180,6 +275,22 @@ impl Jeu {
     fn resultat(&self) -> &'static str {
         self.p.resultat()
     }
+}
+
+/// Lot de positions à évaluer -> dict de bytes (lu par `rs.lot_numpy`).
+fn lot_py<'py>(py: Python<'py>, lot: &Lot) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("b", lot.b)?;
+    d.set_item("a_len", lot.a_len)?;
+    d.set_item("cell_i", PyBytes::new(py, octets(&lot.cell_i)))?;
+    d.set_item("cell_f", PyBytes::new(py, octets(&lot.cell_f)))?;
+    d.set_item("unit_i", PyBytes::new(py, octets(&lot.unit_i)))?;
+    d.set_item("unit_f", PyBytes::new(py, octets(&lot.unit_f)))?;
+    d.set_item("glob_i", PyBytes::new(py, octets(&lot.glob_i)))?;
+    d.set_item("glob_f", PyBytes::new(py, octets(&lot.glob_f)))?;
+    d.set_item("acts", PyBytes::new(py, octets(&lot.acts)))?;
+    d.set_item("n_act", PyBytes::new(py, octets(&lot.n_act)))?;
+    Ok(d)
 }
 
 fn lire<'py, T: for<'a> FromPyObject<'a, 'py>>(d: &Bound<'py, PyDict>, cle: &str, defaut: T) -> PyResult<T> {
@@ -213,6 +324,7 @@ impl AutoJeu {
             p_draft: lire(params, "p_draft", 0.0f64)?,
             simulations_draft: lire(params, "simulations_draft", 128usize)?,
             meilleur_coup: lire(params, "meilleur_coup", false)?,
+            draft_exact: lire(params, "draft_exact", 0usize)?,
         };
         Ok(AutoJeu { a: AutoJeuRs::new(p, graine) })
     }
@@ -232,18 +344,7 @@ impl AutoJeu {
             _ => None,
         };
         let Some(lot) = self.a.etape(reps) else { return Ok(None) };
-        let d = PyDict::new(py);
-        d.set_item("b", lot.b)?;
-        d.set_item("a_len", lot.a_len)?;
-        d.set_item("cell_i", PyBytes::new(py, octets(&lot.cell_i)))?;
-        d.set_item("cell_f", PyBytes::new(py, octets(&lot.cell_f)))?;
-        d.set_item("unit_i", PyBytes::new(py, octets(&lot.unit_i)))?;
-        d.set_item("unit_f", PyBytes::new(py, octets(&lot.unit_f)))?;
-        d.set_item("glob_i", PyBytes::new(py, octets(&lot.glob_i)))?;
-        d.set_item("glob_f", PyBytes::new(py, octets(&lot.glob_f)))?;
-        d.set_item("acts", PyBytes::new(py, octets(&lot.acts)))?;
-        d.set_item("n_act", PyBytes::new(py, octets(&lot.n_act)))?;
-        Ok(Some(d))
+        Ok(Some(lot_py(py, &lot)?))
     }
 
     /// Partie suivie pour le direct : (graine, premier joueur, armées, décisions, finie, parties
@@ -260,7 +361,13 @@ impl AutoJeu {
         })
     }
 
-    /// Exemples (bytes), statistiques et relevés (graine, actions, résultat) des parties jouées.
+    /// Parties terminées depuis le dernier appel à `resultats`.
+    fn terminees(&self) -> u64 {
+        self.a.stats.parties
+    }
+
+    /// Exemples (bytes), statistiques et relevés (graine, actions, résultat) des parties terminées
+    /// depuis le dernier appel ; les parties en cours continuent (auto-jeu continu).
     fn resultats<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dn = std::mem::take(&mut self.a.donnees);
         let d = PyDict::new(py);
@@ -279,7 +386,9 @@ impl AutoJeu {
         d.set_item("lieux", PyBytes::new(py, octets(&dn.lieux)))?;
         d.set_item("marge", PyBytes::new(py, octets(&dn.marge)))?;
         d.set_item("main_adv", PyBytes::new(py, octets(&dn.main_adv)))?;
-        let s = self.a.stats;
+        d.set_item("debut", PyBytes::new(py, octets(&dn.debut)))?;
+        // statistiques remises à zéro : auto-jeu continu, lu par morceaux (voir `terminees`)
+        let s = std::mem::take(&mut self.a.stats);
         let st = PyDict::new(py);
         st.set_item("parties", s.parties)?;
         st.set_item("victoires_blanc", s.victoires_blanc)?;
@@ -302,10 +411,181 @@ impl AutoJeu {
     }
 }
 
+/// Paramètres de recherche d'un agent d'évaluation : meilleur coup, sans bruit.
+fn params_agent(d: &Bound<'_, PyDict>) -> PyResult<ParamsRecherche> {
+    let def = ParamsRecherche::default();
+    Ok(ParamsRecherche {
+        simulations: lire(d, "simulations", 128usize)?,
+        m: lire(d, "m", 32usize)?,
+        c_visit: lire(d, "c_visit", def.c_visit)?,
+        c_scale: lire(d, "c_scale", def.c_scale)?,
+        c_puct: lire(d, "c_puct", def.c_puct)?,
+        fpu: lire(d, "fpu", def.fpu)?,
+        parallele: lire(d, "parallele", 1usize)?,
+        coup_gagnant: lire(d, "coup_gagnant", true)?,
+        cle_publique: lire(d, "cle_publique", true)?,
+        draft_exact: lire(d, "draft_exact", 0usize)?,
+        bruit: false,
+        bruit_coup: false,
+        ..def
+    })
+}
+
+/// Matchs entre agents à recherche neuronale (voir `matchs.rs`).
+#[pyclass(module = "champ_rs")]
+struct Match {
+    m: MatchRs,
+}
+
+#[pymethods]
+impl Match {
+    /// `parties` : (graine, agent du camp 0, agent du camp 1) ; `agents` : réglages de recherche.
+    #[new]
+    #[pyo3(signature = (parties, agents, draft=false, max_manches=150, simultanees=512, releves=0, fils=1))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(parties: Vec<(u64, usize, usize)>, agents: Vec<Bound<'_, PyDict>>, draft: bool,
+           max_manches: u16, simultanees: usize, releves: usize, fils: usize) -> PyResult<Self> {
+        let agents: Vec<ParamsRecherche> = agents.iter().map(params_agent).collect::<PyResult<_>>()?;
+        if parties.iter().any(|&(_, a, b)| a >= agents.len() || b >= agents.len()) {
+            return Err(PyValueError::new_err("agent inconnu"));
+        }
+        let p = ParamsMatch { parties, draft, max_manches, simultanees: simultanees.max(1), agents, releves,
+                              fils: fils.max(1) };
+        Ok(Match { m: MatchRs::new(p) })
+    }
+
+    /// Envoie les réponses aux lots précédents (par agent : (logits en bytes f32, a_len,
+    /// valeurs en bytes f32), ou None pour un lot vide) et renvoie les lots suivants (un par
+    /// agent, None s'il est vide), ou None quand toutes les parties sont terminées.
+    #[pyo3(signature = (reponses=None))]
+    fn etape<'py>(&mut self, py: Python<'py>, reponses: Option<Vec<Option<(Vec<u8>, usize, Vec<u8>)>>>)
+                  -> PyResult<Option<Vec<Option<Bound<'py, PyDict>>>>> {
+        let conv: Vec<Option<(Vec<f32>, usize, Vec<f32>)>> = reponses
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| r.map(|(l, a, v)| (flottants(&l), a, flottants(&v))))
+            .collect();
+        let mut reps: Vec<Option<(&[f32], usize, &[f32])>> =
+            conv.iter().map(|r| r.as_ref().map(|(l, a, v)| (l.as_slice(), *a, v.as_slice()))).collect();
+        reps.resize(self.m.evaluations.len(), None);
+        let Some(lots) = self.m.etape(&reps) else { return Ok(None) };
+        lots.iter().map(|l| if l.b > 0 { lot_py(py, l).map(Some) } else { Ok(None) }).collect::<PyResult<_>>().map(Some)
+    }
+
+    /// Parties terminées depuis le dernier appel : (graine, agent du camp 0, agent du camp 1,
+    /// score du camp 0 (1, 0, -1), manches, décisions, résultat, décisions jouées ou None).
+    #[allow(clippy::type_complexity)]
+    fn resultats(&mut self) -> Vec<(u64, usize, usize, i8, u16, u32, &'static str, Option<Vec<ActionPy>>)> {
+        std::mem::take(&mut self.m.resultats)
+            .into_iter()
+            .map(|r| (r.graine, r.agents[0], r.agents[1], r.score0, r.manches, r.decisions, r.resultat,
+                      r.actions.map(|a| a.iter().map(vers_py).collect())))
+            .collect()
+    }
+
+    /// Évaluations demandées par chaque agent.
+    fn evaluations(&self) -> Vec<u64> {
+        self.m.evaluations.clone()
+    }
+
+    /// Parties lancées (terminées ou en cours).
+    fn lancees(&self) -> usize {
+        self.m.lancees()
+    }
+}
+
+/// Recherche Gumbel IS-MCTS sur une position (bot de jeu, analyse) : même protocole que
+/// `AutoJeu.etape`, avec une seule recherche.
+#[pyclass(module = "champ_rs")]
+struct RechercheJeu {
+    r: Moteur,
+    requetes: Vec<Requete>,
+    fini: bool,
+}
+
+#[pymethods]
+impl RechercheJeu {
+    /// `agent` : réglages de recherche (simulations, m, parallele, c_scale, coup_gagnant…).
+    #[new]
+    #[pyo3(signature = (jeu, agent, graine=0))]
+    fn new(jeu: &Jeu, agent: &Bound<'_, PyDict>, graine: u64) -> PyResult<Self> {
+        let p = params_agent(agent)?;
+        let mut legal = Vec::new();
+        jeu.p.actions_legales(&mut legal);
+        if jeu.p.e.fini || legal.is_empty() {
+            return Err(PyValueError::new_err("aucune décision à chercher"));
+        }
+        let (r, requetes) = Moteur::nouvelle(&jeu.p, p.simulations, p, graine);
+        Ok(RechercheJeu { r, requetes, fini: false })
+    }
+
+    /// Envoie les réponses au lot précédent et renvoie le lot suivant, ou None quand la
+    /// recherche est terminée (voir `resultat`).
+    #[pyo3(signature = (logits=None, a_len=0, valeurs=None))]
+    fn etape<'py>(&mut self, py: Python<'py>, logits: Option<&[u8]>, a_len: usize,
+                  valeurs: Option<&[u8]>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        if let (Some(l), Some(v)) = (logits, valeurs) {
+            let (lg, va) = (flottants(l), flottants(v));
+            let reps: Vec<(&[f32], f32)> = (0..va.len()).map(|i| (&lg[i * a_len..(i + 1) * a_len], va[i])).collect();
+            self.requetes = self.r.repondre(&reps);
+            self.fini = self.requetes.is_empty();
+        }
+        if self.fini {
+            return Ok(None);
+        }
+        let lot = assembler_lot(vec![std::mem::take(&mut self.requetes)]);
+        Ok(Some(lot_py(py, &lot)?))
+    }
+
+    /// Arrêt demandé : réponses au dernier lot, puis résultat sans autre simulation.
+    fn interrompre(&mut self, logits: &[u8], a_len: usize, valeurs: &[u8]) {
+        if self.fini {
+            return;
+        }
+        let (lg, va) = (flottants(logits), flottants(valeurs));
+        let reps: Vec<(&[f32], f32)> = (0..va.len()).map(|i| (&lg[i * a_len..(i + 1) * a_len], va[i])).collect();
+        self.r.repondre_et_terminer(&reps);
+        self.requetes.clear();
+        self.fini = true;
+    }
+
+    /// Recherche progressive : passe suivante de `budget` simulations sur les `candidats`
+    /// meilleurs coups, l'arbre conservé ; renvoie son premier lot (None : rien à chercher).
+    fn prolonger<'py>(&mut self, py: Python<'py>, budget: usize, candidats: usize) -> PyResult<Option<Bound<'py, PyDict>>> {
+        if !self.fini {
+            return Err(PyRuntimeError::new_err("passe précédente non terminée"));
+        }
+        self.requetes = self.r.prolonger(budget, candidats);
+        self.fini = self.requetes.is_empty();
+        if self.fini {
+            return Ok(None);
+        }
+        let lot = assembler_lot(vec![std::mem::take(&mut self.requetes)]);
+        Ok(Some(lot_py(py, &lot)?))
+    }
+
+    /// Ligne principale après chaque coup de la racine (ordre des actions légales) : suite des
+    /// coups les plus visités, avec leurs visites. Pièce 255 : pièce face cachée d'un autre joueur.
+    fn lignes(&self, profondeur: usize) -> Vec<Vec<(ActionPy, f64)>> {
+        self.r.lignes(profondeur).iter().map(|l| l.iter().map(|(a, n)| (vers_py(a), *n)).collect()).collect()
+    }
+
+    /// (action, actions légales, politique améliorée π', visites, Q, valeur, valeur du réseau,
+    /// simulations), Q et valeurs du point de vue du joueur au trait.
+    #[allow(clippy::type_complexity)]
+    fn resultat(&self) -> PyResult<(ActionPy, Vec<ActionPy>, Vec<f32>, Vec<f64>, Vec<f64>, f64, f64, usize)> {
+        let r = self.r.resultat().ok_or_else(|| PyRuntimeError::new_err("recherche non terminée"))?;
+        Ok((vers_py(&r.action), r.legal.iter().map(vers_py).collect(), r.politique.clone(), r.visites.clone(),
+            r.q.clone(), r.valeur, r.v_reseau, r.simulations))
+    }
+}
+
 #[pymodule]
 fn champ_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Jeu>()?;
     m.add_class::<AutoJeu>()?;
+    m.add_class::<Match>()?;
+    m.add_class::<RechercheJeu>()?;
     m.add("NOMS_TYPES", moteur::NOMS_TYPES.to_vec())?;
     Ok(())
 }

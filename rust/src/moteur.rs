@@ -1179,6 +1179,8 @@ impl Partie {
                 pool[n] = c;
                 n += 1;
             }
+            // tri : la copie ne dépend que du multiensemble connu, pas de la répartition réelle
+            pool[..n].sort_unstable();
             rng.shuffle(&mut pool[..n]);
             let (nh, nd) = (j.main.len(), j.def_cachee.len());
             j.main = Pile::from_slice(&pool[..nh]);

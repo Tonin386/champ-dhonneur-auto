@@ -8,6 +8,7 @@ import re
 
 from ..engine import FACE_DOWN, Game
 from ..notation import action_str, describe
+from .recherche import CACHEE
 
 _PIECE = re.compile(r" \(pièce [^)]*\)")
 
@@ -42,6 +43,8 @@ def analyser(game: Game, bot, top: int = 5, observateur: int | None = None,
     if game.done:
         return {"coups": [], "valeur": None, "fini": game.result_label(), "bastions": bastions(game)}
     mat = Solveur(observateur).chercher(game) if solveur else None
+    if getattr(bot, "rust", False):
+        return _analyser_rust(game, bot, top, observateur, mat, profondeur, limite, suivi, joue)
     rech = bot.recherche
     from .recherche import executer
     if limite is None:
@@ -55,14 +58,75 @@ def analyser(game: Game, bot, top: int = 5, observateur: int | None = None,
     return _formater(game, bot, res, mat, top, observateur, profondeur, joue)
 
 
+def _analyser_rust(game: Game, bot, top: int, observateur: int | None, mat: dict | None,
+                   profondeur: int, limite, suivi, joue) -> dict:
+    """`analyser` avec la recherche du moteur Rust (bien plus de simulations par seconde) :
+    mêmes passes que `RechercheGumbel.approfondir` (halving séquentiel de 32 · 2^(d−1)
+    simulations sur les meilleurs candidats, arbre conservé), lignes principales exportées par
+    le moteur Rust. L'horizon affiché est la longueur de la plus longue ligne principale."""
+    import time
+
+    from ..bots.neural import PARALLELE_RUST
+    from . import rs
+    agent = {"parallele": PARALLELE_RUST}
+    debut = time.monotonic()
+    k = len(game.legal_actions())
+
+    def formater(r, d, en_cours: bool) -> dict:
+        res = rs._resultat(r, game)
+        lignes = r.lignes(profondeur)
+        longueurs = [len(l) for l in lignes] or [0]
+        res.infos.update(profondeur=d, secondes=time.monotonic() - debut, en_cours=en_cours,
+                         horizon=float(max(longueurs)), horizon_max=max(longueurs))
+        return _formater(game, bot, res, mat, top, observateur, profondeur, joue,
+                         racine=_arbre_lignes(res.legal, lignes))
+
+    if limite is None:
+        r = rs.recherche_jeu(game, bot.simulations, agent)
+        rs._conduire(r, bot.ev, r.etape())
+        return formater(r, None, False)
+    compte = [0]
+    d, budget = 1, 32
+    r = rs.recherche_jeu(game, budget, agent)
+    lot = r.etape()
+    while True:
+        interrompue = rs._conduire(r, bot.ev, lot, lambda: limite.atteinte(compte[0], debut), compte)
+        fin = (interrompue or limite.atteinte(compte[0], debut)
+               or (limite.profondeur is not None and d >= limite.profondeur))
+        if not fin and suivi is not None:
+            suivi(formater(r, d, True))
+        if fin:
+            return formater(r, d, False)
+        d, budget = d + 1, budget * 2
+        lot = r.prolonger(budget, min(k, max(32, budget // 16)))
+        if lot is None:
+            return formater(r, d - 1, False)
+
+
+def _arbre_lignes(legal: list, lignes: list):
+    """Arbre réduit aux lignes principales exportées par le moteur Rust (pour `_ligne`)."""
+    from . import rs
+    from .recherche import Noeud
+    racine = Noeud(0)
+    for a0, ligne in zip(legal, lignes):
+        nd = racine.enfants[a0] = Noeud(0)
+        for t, n in ligne:
+            ch = Noeud(0)
+            ch.n = n
+            nd.enfants[rs.action_python(t)] = ch
+            nd = ch
+    return racine
+
+
 def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int | None,
-              profondeur: int, joue) -> dict:
+              profondeur: int, joue, racine=None) -> dict:
     from ..score import appreciation, bastions, depuis_valeur, texte_mat, texte_score
     from .recherche import classement
     k = getattr(bot, "k", None)
     legal = res.legal
     sign = 1.0 if game.team(game.to_move) == 0 else -1.0
-    racine = getattr(bot.recherche, "racine", None) if res.simulations else None
+    if racine is None:
+        racine = getattr(bot.recherche, "racine", None) if res.simulations else None
     ordre = res.infos.get("ordre") or classement(res.visites, res.politique)
     best = legal.index(res.action)
     ordre = [best] + [i for i in ordre if i != best]
@@ -126,6 +190,23 @@ def _formater(game: Game, bot, res, mat: dict | None, top: int, observateur: int
     return out
 
 
+def _representant(g: Game, a):
+    """Action jouable pour une arête face cachée de l'arbre (pièce `CACHEE`) : une pièce que le
+    joueur au trait peut détenir, prise dans sa main si possible, sinon mise en main."""
+    from ..score import _mettre_en_main
+    pl = g.players[g.to_move]
+    legal = g.legal_actions()
+    for c in sorted(set(pl.hand)):
+        if a._replace(coin=c) in legal:
+            return a._replace(coin=c)
+    for c in sorted(set(pl.bag + pl.disc_down) - set(pl.hand)):
+        _mettre_en_main(pl, c)
+        b = a._replace(coin=c)
+        if b in g.legal_actions():
+            return b
+    return None
+
+
 def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> dict:
     """Suite la plus explorée par la recherche après a0, groupée en coups : notation publique
     (`ligne`), équipe qui joue chaque coup (`equipes`, 0 Or, 1 Argent), cases touchées
@@ -148,6 +229,10 @@ def _ligne(game: Game, a0, racine, observateur: int | None, profondeur: int) -> 
     for _ in range(profondeur):
         p = g.to_move
         principal = not g.pending
+        if a.coin == CACHEE:
+            a = _representant(g, a)
+            if a is None:
+                break
         if principal and observateur is not None and p != observateur and a.coin:
             _mettre_en_main(g.players[p], a.coin)   # pièce supposée par la recherche
         if a not in g.legal_actions():
@@ -199,7 +284,7 @@ def suivi(dossier: str | Path, dernieres: int = 30) -> str:
     lignes = [json.loads(l) for l in (d / "journal.jsonl").read_text(encoding="utf-8").splitlines() if l]
     out = [f"Entraînement {d} — {len(lignes)} itérations"]
     out.append(f"{'it':>5} {'parties':>7} {'nulles':>6} {'manches':>7} {'exemples':>8} {'pol':>6} "
-               f"{'val':>6} {'préc':>5} {'préc*':>5} {'part./h':>8} {'Elo':>6}")
+               f"{'val':>6} {'préc':>5} {'préc*':>5} {'ll*':>5} {'part./h':>8} {'Elo':>6}")
     for l in lignes[-dernieres:]:
         st, ap = l["autojeu"], l["apprentissage"]
         n = max(st["parties"], 1)
@@ -209,9 +294,11 @@ def suivi(dossier: str | Path, dernieres: int = 30) -> str:
                    f"{ap.get('perte_politique', float('nan')):>6.3f} {ap.get('perte_valeur', float('nan')):>6.3f} "
                    f"{ap.get('precision_valeur', float('nan')):>5.2f} "
                    f"{(l.get('validation') or {}).get('precision_valeur', float('nan')):>5.2f} "
+                   f"{(l.get('validation') or {}).get('logloss_valeur', float('nan')):>5.3f} "
                    f"{st.get('parties_par_heure', 0):>8} {elo:>6}")
     out.append("préc = précision de valeur sur les exemples d'apprentissage ; préc* = sur des parties "
-               "inédites (écart important = sur-apprentissage)")
+               "inédites (écart important = sur-apprentissage) ; ll* = log-loss de valeur sur les parties "
+               "inédites (≈ 0,69 pour une prédiction constante : elle doit être nettement en dessous)")
     elo_path = d / "elo.json"
     if elo_path.exists():
         elo = json.loads(elo_path.read_text())["elo"]
