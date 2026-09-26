@@ -233,9 +233,9 @@ def jouer_match_rs(evaluateurs: list, agents: list[dict], parties: list[tuple[in
     (1, 0, -1), manches), les évaluations de chaque agent, la durée et les relevés .nch.
     """
     t0 = time.time()
-    if fils is None:
-        from .entrainement import travailleurs_auto
-        fils = travailleurs_auto()
+    if fils is None:     # ≈ cœurs physiques − 1 (sans importer PyTorch, absent de l'image web)
+        import os
+        fils = max(1, (os.cpu_count() or 2) // 2 - 1)
     m = champ_rs.Match([(int(g), int(a), int(b)) for g, a, b in parties], agents, draft, max_manches,
                        simultanees, releves, fils)
     finies: list[tuple] = []

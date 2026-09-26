@@ -1,4 +1,18 @@
-# État au 26/09/2026 et suite
+# État au 27/09/2026 et suite
+
+## Nouveau départ : règles des cartes v2 (27/09/2026)
+- Règles corrigées (commit « Règles des cartes v2 ») : Moine soldat une fois par tour, Fantassin
+  recruté déployable aussitôt. Les données et réseaux antérieurs suivaient les anciennes règles.
+- Ancien entraînement archivé tel quel : `runs/continu_regles_v1` (meilleur : iter_0234, copié en
+  `runs/ancres/regles_v1_0234.pt`).
+- `runs/continu` repart de l'itération 0 : réseau appris initialisé au hasard, fenêtre vide. L'auto-jeu
+  est joué par le meilleur réseau démontré (`autojeu_reseau: "meilleur"`), d'abord regles_v1_0234 (il
+  ne sert qu'à produire des parties, jouées avec les nouvelles règles) ; un réseau appris le remplace dès
+  qu'il le bat avec un IC 95 % > 0. Réinitialisation tous les 25 itérations.
+- À surveiller : la première promotion d'un réseau appris (`meilleur` dans `champ suivi`), puis la
+  progression contre l'ancre regles_v1_0234.
+
+# État au 26/09/2026
 
 ## Mesures clés (RTX 3070, moteur Rust, draft, 128 simulations)
 - Réseau neuf entraîné depuis zéro sur la fenêtre 146-171 : **+180 Elo** contre iter_0171,
