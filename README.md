@@ -222,7 +222,7 @@ docs/             NOTATION.md, REGLES.md, IA.md
 Choix de conception :
 
 - **Décisions atomiques.** Toute capacité en chaîne (Berserk, Moine soldat, Mercenaire, Soldat,
-  Fantassin, défense de la Garde royale) ouvre une décision en attente. Chaque décision a peu
+  Fantassin — tactique et recrutement —, défense de la Garde royale) ouvre une décision en attente. Chaque décision a peu
   d'options : c'est plus simple pour l'interface et c'est l'espace d'action idéal pour le RL.
 - **Information cachée respectée.** Les bots ne voient que leur camp : `Game.determinize(joueur)`
   redistribue au hasard ce que l'adversaire cache (main, sac, défausse cachée), qui est connu

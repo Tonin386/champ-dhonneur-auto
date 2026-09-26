@@ -255,7 +255,7 @@ class Entraineur:
             from .evaluateurs import activer_tf32
             activer_tf32()
         torch.manual_seed(cfg.graine)
-        from .modele import ReseauChamp, nb_parametres
+        from .modele import ReseauChamp, adapter_etat, adapter_optimiseur, nb_parametres
         self.etat = {"iteration": 0, "pas": 0, "dernier_evalue": None}
         etat_path = self.dir / "etat.json"
         if etat_path.exists():
@@ -275,14 +275,16 @@ class Entraineur:
             self.ema = copy.deepcopy(self.model).requires_grad_(False)
         if ck is not None:
             if self.ema is not None:
-                self.ema.load_state_dict(ck["etat"])       # dernier.pt publie les poids moyennés
+                self.ema.load_state_dict(adapter_etat(ck["etat"]))  # dernier.pt : poids moyennés
             brut = self.dir / "modeles" / "brut.pt"
             if self.ema is not None and brut.exists():
-                self.model.load_state_dict(torch.load(brut, map_location="cpu", weights_only=False)["etat"])
+                self.model.load_state_dict(
+                    adapter_etat(torch.load(brut, map_location="cpu", weights_only=False)["etat"]))
             else:
-                self.model.load_state_dict(ck["etat"])
+                self.model.load_state_dict(adapter_etat(ck["etat"]))
             if (self.dir / "optim.pt").exists():
                 self.opt.load_state_dict(torch.load(self.dir / "optim.pt", map_location=self.dev))
+                adapter_optimiseur(self.opt)
         self.fwd = torch.compile(self.model, dynamic=True) if cfg.compiler else self.model
         self.pool = None
         self.tb = None

@@ -127,6 +127,7 @@ def depuis_position(pos: dict, graine: int | None = None) -> Game:
     g.initiative = initiative
     g.round_first = initiative
     g.initiative_moved = False
+    g.priest_used = False
     g.first_player = initiative
     g.current = trait
     g.pending = []

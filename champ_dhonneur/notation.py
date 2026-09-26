@@ -19,7 +19,7 @@ X Arbalétrier) ; « * » = Sceau royal.
     Pièce cachée        {X}  ajouté aux actions face cachée dans un relevé complet
                         (I{S}, $P{X}, --{*}) ; supprimé dans le relevé public.
     Suite de coup       >…   effet enchaîné : Berserk, Soldat, Mercenaire,
-                        Moine soldat, Fantassin (ex. Bc3-c4>Bc4xc5)
+                        Moine soldat, Fantassin (ex. Bc3-c4>Bc4xc5, $F{S}>F@e1)
     Garde royale        (R)  la défense retire une pièce de la réserve
     Refus d'une option  0    (omis dans les relevés)
     Choix d'une carte   K    mise en place avancée (manche 0 : « 0. K C X A N F G R »),

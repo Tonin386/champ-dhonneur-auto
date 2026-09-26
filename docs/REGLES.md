@@ -30,7 +30,7 @@ code à modifier.
 | C | Cavalerie | 4 | Se déplace d'une case puis attaque. |
 | D | Porte étendard | 5 | Déplace d'une case une unité alliée à ≤ 2 cases ; elle finit à ≤ 2 cases du Porte étendard. |
 | E | Éclaireur | 5 | Peut être déployé sur toute case libre adjacente à une unité alliée. |
-| F | Fantassin | 5 | Deux unités simultanées ; tactique : chacun des deux manœuvre. |
+| F | Fantassin | 5 | Deux unités simultanées ; tactique : chaque Fantassin sur le plateau manœuvre. Recruté alors qu'un Fantassin est déjà déployé, peut être déployé aussitôt (carte v2). |
 | G | Garde royale | 5 | Tactique avec le Sceau royal : se déplace de 1 ou 2 cases (chemin libre, pas forcément en ligne droite) vers un Lieu libre contrôlé par son équipe. Attaquée, peut perdre une pièce de la réserve au lieu de sa pile. |
 | H | Cavalerie légère | 5 | Se déplace de 2 cases. |
 | K | Capitaine | 5 | Une unité alliée à ≤ 2 cases effectue une attaque classique. |
@@ -38,7 +38,7 @@ code à modifier.
 | M | Mercenaire | 5 | Recruter un Mercenaire alors qu'il est déployé lui offre une manœuvre gratuite. |
 | N | Chevalier | 4 | Ne peut être attaqué que par une unité renforcée. |
 | P | Piquier | 4 | Attaqué par une unité adjacente, retire une pièce de l'attaquant. |
-| R | Moine soldat | 4 | Après une attaque ou un contrôle, pioche une pièce et la joue aussitôt. |
+| R | Moine soldat | 4 | Après une attaque ou un contrôle, pioche une pièce et la joue aussitôt. Une fois par tour (carte v2). |
 | S | Soldat | 5 | Après une attaque, peut se déplacer d'une case. |
 | X | Arbalétrier | 5 | Attaque à 2 cases en ligne droite, case intermédiaire libre. Attaque classique permise. |
 
@@ -48,12 +48,19 @@ Total : 74 pièces, conforme au matériel.
 
 1. **Nombres de pièces** : A4 B5 C4 D5 E5 F5 G5 H5 K5 L4 M5 N4 P4 R4 S5 X5, conformes aux cartes.
    → `units.py`
-2. **Moine soldat** : il pioche même s'il vient d'être éliminé par un Piquier. → `engine._trigger`
+2. **Moine soldat** : il pioche même s'il vient d'être éliminé par un Piquier. « Une fois par tour »
+   (carte v2) : un seul déclenchement entre deux pièces jouées depuis la main, quel que soit le Moine
+   soldat (le second n'en déclenche pas si le premier a pioché). → `engine._trigger` (`priest_used`)
 3. **Soldat / Berserk** : leur capacité ne joue que s'ils survivent à l'attaque. → `engine._pending_valid`
 4. **Cavalerie** : la tactique exige une cible (pas de « déplacement seul »). Idem Lancier (FAQ).
 5. **Cavalerie légère** : 2 pas successifs par une case libre, arrivée à distance 2.
 6. **Capitaine / Porte étendard** ne se ciblent pas eux-mêmes.
-7. **Fantassin** : tactique possible seulement avec 2 Fantassins en jeu ; chaque manœuvre est facultative.
+7. **Fantassin** : tactique possible seulement avec 2 Fantassins en jeu (avec un seul, elle équivaut à une
+   manœuvre ordinaire) ; chaque manœuvre est facultative.
+16. **Fantassin (carte v2)** : le déploiement du Fantassin recruté est facultatif (décision intercalée
+    `footman_deploy`, notée `$F>F@e1`) ; la pièce recrutée va sur un Lieu libre contrôlé au lieu de la
+    défausse. Aussi après un recrutement par la pièce piochée du Moine soldat.
+    → `engine._pending_actions`, `moteur.rs actions_attente`
 8. **Garde royale** : la défense par la réserve est un choix du défenseur (décision intercalée).
 9. **Piquier** : pas de riposte contre les tirs à 2 cases (Archer, Arbalétrier).
 10. **Berserk** : ses manœuvres supplémentaires sont déplacer, contrôler ou attaquer.

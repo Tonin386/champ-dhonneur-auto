@@ -33,8 +33,9 @@ UNITS: dict[str, UnitDef] = {u.letter: u for u in [
             "Déplace d'une case une unité alliée à 2 cases ou moins ; elle doit finir à 2 cases ou moins du Porte étendard."),
     UnitDef("E", "Éclaireur", 5, "",
             "(!) Peut être déployé sur une case libre adjacente à une unité alliée."),
-    UnitDef("F", "Fantassin", 5, "Chacun des deux Fantassins effectue une manœuvre.",
-            "(!) Deux unités de Fantassins peuvent être déployées.", max_units=2),
+    UnitDef("F", "Fantassin", 5, "Chaque Fantassin sur le plateau effectue une manœuvre.",
+            "(!) Deux unités de Fantassins peuvent être déployées. Un Fantassin recruté alors "
+            "qu'un Fantassin est déjà déployé peut être déployé aussitôt.", max_units=2),
     UnitDef("G", "Garde royale", 5,
             "Défausse le Sceau royal pour déplacer la Garde royale de 1 ou 2 cases vers un Lieu que "
             "vous contrôlez.",
@@ -52,7 +53,8 @@ UNITS: dict[str, UnitDef] = {u.letter: u for u in [
     UnitDef("P", "Piquier", 4, "",
             "(!) Attaqué par une unité adjacente, retire une pièce de l'unité attaquante."),
     UnitDef("R", "Moine soldat", 4, "",
-            "(!) Après une attaque ou un contrôle, piochez une pièce et utilisez-la immédiatement."),
+            "(!) Après une attaque ou un contrôle, piochez une pièce et utilisez-la immédiatement. "
+            "Une fois par tour."),
     UnitDef("S", "Soldat", 5, "", "(!) Après une attaque, peut se déplacer d'une case."),
     UnitDef("X", "Arbalétrier", 5,
             "Attaque une unité à 2 cases en ligne droite, case intermédiaire libre."),

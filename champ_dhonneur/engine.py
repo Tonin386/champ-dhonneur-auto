@@ -5,8 +5,8 @@ Architecture :
   * `legal_actions()` renvoie les décisions possibles pour `to_move`.
   * `apply(action)` applique une décision.
 
-Les effets en chaîne (Berserk, Soldat, Moine soldat, Mercenaire, tactique du
-Fantassin, défense de la Garde royale) sont gérés par une pile de décisions
+Les effets en chaîne (Berserk, Soldat, Moine soldat, Mercenaire, tactique et
+recrutement du Fantassin, défense de la Garde royale) sont gérés par une pile de décisions
 en attente (`pending`). Chaque décision est donc atomique et petite, ce qui
 simplifie l'interface humaine, la notation et l'apprentissage par renforcement.
 
@@ -175,6 +175,7 @@ class Game:
         self.first_player = first
         self.initiative = first
         self.initiative_moved = False
+        self.priest_used = False           # capacité du Moine soldat déjà utilisée ce tour (carte v2)
         self.round_first = first
         self.round = 0
         self.current = first
@@ -234,6 +235,7 @@ class Game:
         g.markers_left = self.markers_left[:]
         g.first_player, g.initiative = self.first_player, self.initiative
         g.initiative_moved, g.round_first = self.initiative_moved, self.round_first
+        g.priest_used = self.priest_used
         g.round, g.current = self.round, self.current
         g.pending = [p.copy() for p in self.pending]
         g.winner, g.done = self.winner, self.done
@@ -478,6 +480,8 @@ class Game:
             for pos in pd.positions:
                 out = out + self._maneuvers(pd.player, pos, None)
             return out
+        if k == "footman_deploy":   # la pièce recrutée va sur le plateau au lieu de la défausse
+            return skip + [Action(DEPLOY, None, "F", (c,)) for c in sorted(self._deploy_cells(pd.player, "F"))]
         raise RuntimeError(k)
 
     # ----------------------------------------------------------- application
@@ -522,6 +526,9 @@ class Game:
             pd.positions = tuple(pos for pos in pd.positions
                                  if (u := self.board.get(pos)) and u.utype == "F" and u.owner == pd.player)
             return len(self._pending_actions(pd)) > 1
+        if k == "footman_deploy":
+            return (0 < len(self.units_of(pd.player, "F")) < UNITS["F"].max_units
+                    and len(self._pending_actions(pd)) > 1)
         unit = self.board.get(pd.pos)
         want = {"berserk": "B", "soldat": "S", "merc": "M"}[k]
         if unit is None or unit.utype != want or unit.owner != pd.player:
@@ -554,6 +561,7 @@ class Game:
         coin = a.coin
         if from_hand:
             pl.hand.remove(coin)
+            self.priest_used = False       # nouveau tour
         k = a.kind
         if k == PASS:
             pl.disc_down.append(coin)
@@ -568,6 +576,9 @@ class Game:
             if a.extra == "M":
                 for pos in self.units_of(p, "M"):
                     self.pending.append(Pending("merc", p, pos))
+            elif a.extra == "F" and self.units_of(p, "F"):
+                # Fantassin (carte v2) : déploiement immédiat si un Fantassin est déjà déployé
+                self.pending.append(Pending("footman_deploy", p))
         elif k == DEPLOY:
             self.board[a.cells[0]] = Unit(p, a.unit, 1)
         elif k == BOLSTER:
@@ -590,7 +601,8 @@ class Game:
             self.pending.append(Pending("berserk", unit.owner, pos))
         elif unit.utype == "S" and kind == ATTACK:
             self.pending.append(Pending("soldat", unit.owner, pos))
-        elif unit.utype == "R" and kind in (ATTACK, CONTROL):
+        elif unit.utype == "R" and kind in (ATTACK, CONTROL) and not self.priest_used:
+            self.priest_used = True        # une fois par tour (carte v2)
             self.pending.append(Pending("priest", unit.owner))
 
     def _do_maneuver(self, p: int, a: Action) -> None:
@@ -691,6 +703,13 @@ class Game:
             if rest:
                 self.pending.append(Pending("footman", pd.player, positions=rest))
             self._do_maneuver(pd.player, a)
+        elif k == "footman_deploy":
+            pl = self.players[pd.player]
+            # la pièce recrutée est la dernière de la défausse visible (rien n'a été joué depuis)
+            if a.kind != DEPLOY or not pl.disc_up or pl.disc_up[-1] != "F":
+                raise IllegalAction(str(a))
+            pl.disc_up.pop()
+            self.board[a.cells[0]] = Unit(pd.player, "F", 1)
 
     # ---------------------------------------------------------- informations
     def pending_label(self) -> str:
@@ -703,6 +722,7 @@ class Game:
             "soldat": "Soldat : se déplacer d'une case après l'attaque ?",
             "merc": "Mercenaire : manœuvre gratuite ?",
             "footman": "Fantassin : manœuvre du Fantassin suivant",
+            "footman_deploy": "Fantassin recruté : le déployer aussitôt ?",
             "priest": "Moine soldat : utilisez la pièce piochée",
             "rg": "Garde royale attaquée : retirer une pièce de la pile ou de la réserve ?",
         }[self.pending[-1].kind]

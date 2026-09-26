@@ -78,6 +78,7 @@ exactement la partie) et disparaît du **relevé public** (ce que l'adversaire a
 | Capitaine | `Kb2:Sc3xc4` | ordonne au Soldat en c3 d'attaquer c4 |
 | Porte étendard | `Db2:Sc3-c4` | fait avancer le Soldat de c3 en c4 |
 | Fantassin | `F:>Fb2^>Fd4-d5` | les deux Fantassins manœuvrent |
+| Fantassin recruté | `$F{S}>F@e1` | déployé aussitôt (un Fantassin était déjà en jeu) |
 | Garde royale | `*:Gb2-b3` | le Sceau royal déplace la Garde |
 
 ### Effets enchaînés : `>`

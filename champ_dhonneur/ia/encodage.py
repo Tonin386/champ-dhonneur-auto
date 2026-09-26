@@ -50,7 +50,9 @@ KINDS = [DEPLOY, BOLSTER, MOVE, CONTROL, ATTACK, TACTIC, INITIATIVE, RECRUIT, PA
 KIND_ID = {k: i for i, k in enumerate(KINDS)}
 N_KINDS = len(KINDS)
 
-PENDING_KINDS = ["", "berserk", "soldat", "merc", "footman", "priest", "rg", "draft"]
+# indices = constantes ATT_* de rust/src/moteur.rs ; ajouts en fin de liste seulement (les modèles
+# existants sont agrandis au chargement, voir modele.adapter_etat)
+PENDING_KINDS = ["", "berserk", "soldat", "merc", "footman", "priest", "rg", "draft", "footman_deploy"]
 PENDING_ID = {k: i for i, k in enumerate(PENDING_KINDS)}
 
 MAX_COINS_EMB = 8

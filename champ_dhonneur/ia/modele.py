@@ -145,13 +145,40 @@ class ModeleIncompatible(ValueError):
     pass
 
 
+# type de décision ajouté après coup -> type existant dont il reprend le plongement
+_NOUVELLES_DECISIONS = {"footman_deploy": "merc"}   # suite gratuite d'un recrutement
+
+
+def adapter_etat(sd: dict) -> dict:
+    """Agrandit la table des types de décision d'un modèle antérieur à leur ajout (les lignes
+    nouvelles reprennent celle d'un type proche, voir `_NOUVELLES_DECISIONS`)."""
+    w = sd.get("emb_pending.weight")
+    if w is None or w.shape[0] >= len(PENDING_KINDS):
+        return sd
+    lignes = [w]
+    for k in PENDING_KINDS[w.shape[0]:]:
+        lignes.append(w[PENDING_KINDS.index(_NOUVELLES_DECISIONS[k])].unsqueeze(0))
+    return {**sd, "emb_pending.weight": torch.cat(lignes)}
+
+
+def adapter_optimiseur(opt: torch.optim.Optimizer) -> None:
+    """Complète par des zéros les moments d'AdamW des paramètres agrandis par `adapter_etat`."""
+    for p, st in opt.state.items():
+        for cle in ("exp_avg", "exp_avg_sq"):
+            m = st.get(cle)
+            if m is not None and m.shape != p.shape:
+                z = torch.zeros_like(p, dtype=m.dtype, device=m.device)
+                z[:m.shape[0]] = m
+                st[cle] = z
+
+
 def charger(path, device: str | torch.device = "cpu") -> tuple[ReseauChamp, dict]:
     ck = torch.load(path, map_location="cpu", weights_only=False)
     if ck.get("version_encodage", 1) != VERSION:
         raise ModeleIncompatible(f"{path} : encodage v{ck.get('version_encodage', 1)}, "
                                  f"v{VERSION} attendu (modèle d'une génération précédente)")
     model = ReseauChamp(ConfigModele.depuis(ck["config"]))
-    model.load_state_dict(ck["etat"])
+    model.load_state_dict(adapter_etat(ck["etat"]))
     model.to(device).eval()
     return model, ck
 

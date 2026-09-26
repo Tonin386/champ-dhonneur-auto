@@ -120,6 +120,7 @@ impl Jeu {
         d.set_item("premier", e.premier)?;
         d.set_item("initiative", e.initiative)?;
         d.set_item("init_bougee", e.init_bougee)?;
+        d.set_item("moine_utilise", e.moine_utilise)?;
         d.set_item("premier_manche", e.premier_manche)?;
         d.set_item("en_draft", e.en_draft)?;
         let dispo: String = (1..=16u8).filter(|&u| e.dispo & (1 << (u - 1)) != 0).map(lettre).collect();
@@ -234,6 +235,7 @@ impl Jeu {
         e.premier = requis("premier")?.extract()?;
         e.initiative = requis("initiative")?.extract()?;
         e.init_bougee = requis("init_bougee")?.extract()?;
+        e.moine_utilise = lire(etat, "moine_utilise", false)?;
         e.premier_manche = requis("premier_manche")?.extract()?;
         e.manche = requis("manche")?.extract()?;
         e.courant = requis("courant")?.extract()?;

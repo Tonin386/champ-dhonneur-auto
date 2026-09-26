@@ -25,6 +25,7 @@ def etat_python(g: Game) -> dict:
         "manche": g.round, "courant": g.current, "au_trait": g.to_move, "fini": g.done,
         "gagnant": -1 if g.winner is None else g.winner, "marqueurs": list(g.markers_left),
         "premier": g.first_player, "initiative": g.initiative, "init_bougee": g.initiative_moved,
+        "moine_utilise": g.priest_used,
         "premier_manche": g.round_first, "en_draft": g.in_draft,
         "dispo": "".join(g.draft.available) if g.in_draft else "",
         "unites": ["".join(p.units) for p in g.players],
@@ -110,6 +111,23 @@ def test_mises_en_place_imposees():
     rejouer(6, [list("NHPK"), list("CFMG")], premier=1)
     rejouer(7, [list("ADNG"), list("CXLE")])
     rejouer(8, [list("BFRM"), list("DGKS")], max_manches=40)
+
+
+def test_fantassin_deploiement_immediat():
+    # carte v2 : déploiement du Fantassin recruté (action DEPLOY sans pièce), dans les deux moteurs
+    n = 0
+    for seed in range(40):
+        g = rejouer(seed, [list("FSXH"), list("AFLE")], premier=seed % 2, encoder_tous=3)
+        n += sum(1 for _, _, a in g.log if a.kind == "deploy" and a.coin is None)
+    assert n > 0
+
+
+def test_moine_soldat_une_fois_par_tour():
+    # carte v2 : même blocage du second déclenchement dans les deux moteurs
+    # (12 déclenchements bloqués dans ces parties)
+    for armees in (["RKCA", "RKCA"], ["RKSN", "RDHG"]):
+        for seed in range(40):
+            rejouer(seed, [list(u) for u in armees], premier=seed % 2, strategie="agressive", encoder_tous=3)
 
 
 def test_toutes_les_unites_rencontrees():

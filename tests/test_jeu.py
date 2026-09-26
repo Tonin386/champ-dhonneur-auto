@@ -168,7 +168,8 @@ def test_analyse_progressive_et_coup_joue(monkeypatch):
     assert fin["profondeur"] == 3 and not fin["en_cours"] and fin["simulations"] == 32 * 7
     # notation de l'analyse : la pièce d'un coup face cachée y figure entre accolades
     assert fin["coups"] and fin["joue"]["coup"].startswith(joue["n"]) and fin["joue"]["rang"] >= 1
-    assert fin["coups"][0]["visites"] == max(c["visites"] for c in fin["coups"]) or fin["mat"]
+    # premier coup : choisi parmi les plus explorés (au moins la moitié des visites du plus exploré)
+    assert 2 * fin["coups"][0]["visites"] >= max(c["visites"] for c in fin["coups"]) or fin["mat"]
     # position finie : réponse immédiate
     a = c.post(f"/api/jeu/{gid}/analyse?pos=1&simulations=64").json()
     assert a["coups"] and a["simulations"] == 64

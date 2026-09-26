@@ -252,6 +252,8 @@ pub const ATT_MERC: u8 = 3;
 pub const ATT_FOOTMAN: u8 = 4;
 pub const ATT_PRIEST: u8 = 5;
 pub const ATT_RG: u8 = 6;
+// 7 : type « draft » de l'encodage (encodage::ATT_DRAFT), jamais empilé
+pub const ATT_FOOTMAN_DEPLOIE: u8 = 8;
 
 #[derive(Clone, Copy)]
 pub struct Attente {
@@ -283,6 +285,7 @@ pub struct Etat {
     pub premier: u8,
     pub initiative: u8,
     pub init_bougee: bool,
+    pub moine_utilise: bool, // capacité du Moine soldat déjà utilisée ce tour (carte v2)
     pub premier_manche: u8,
     pub manche: u16,
     pub courant: u8,
@@ -367,6 +370,7 @@ impl Partie {
             premier,
             initiative: premier,
             init_bougee: false,
+            moine_utilise: false,
             premier_manche: premier,
             manche: 0,
             courant: premier,
@@ -885,6 +889,16 @@ impl Partie {
                     self.manoeuvres(pd.joueur, pos, 0, false, 0, out);
                 }
             }
+            ATT_FOOTMAN_DEPLOIE => {
+                // la pièce recrutée va sur le plateau au lieu de la défausse
+                out.push(Action::simple(SKIP, 0));
+                let masque = self.cases_deploiement(pd.joueur, U_F);
+                for c in 0..N_CASES as u8 {
+                    if masque & (1u64 << c) != 0 {
+                        out.push(Action::avec(DEPLOY, 0, U_F, &[c], 0));
+                    }
+                }
+            }
             g => panic!("décision en attente inconnue {g}"),
         }
     }
@@ -956,6 +970,11 @@ impl Partie {
                 pd.npos = n as u8;
                 self.nb_actions_attente(&pd) > 1
             }
+            ATT_FOOTMAN_DEPLOIE => {
+                let mut pos = [0u8; 16];
+                let n = self.unites_de(pd.joueur, U_F, &mut pos);
+                n > 0 && n < max_unites(U_F) && self.nb_actions_attente(&pd) > 1
+            }
             g => {
                 let c = self.e.cases[pd.pos as usize];
                 let voulu = match g {
@@ -979,8 +998,11 @@ impl Partie {
     fn appliquer_principale(&mut self, p: u8, a: &Action, de_la_main: bool) -> Result<(), CoupIllegal> {
         let piece = a.piece;
         let pi = p as usize;
-        if de_la_main && !self.e.joueurs[pi].main.remove_first(piece) {
-            return Err(CoupIllegal(format!("pièce absente de la main : {:?}", a)));
+        if de_la_main {
+            if !self.e.joueurs[pi].main.remove_first(piece) {
+                return Err(CoupIllegal(format!("pièce absente de la main : {:?}", a)));
+            }
+            self.e.moine_utilise = false; // nouveau tour
         }
         match a.genre {
             PASS => self.e.joueurs[pi].def_cachee.push(piece),
@@ -999,6 +1021,12 @@ impl Partie {
                     let n = self.unites_de(p, U_M, &mut pos);
                     for &ps in &pos[..n] {
                         self.empiler(Attente::new(ATT_MERC, p, ps as i8));
+                    }
+                } else if a.extra == U_F {
+                    // Fantassin (carte v2) : déploiement immédiat si un Fantassin est déjà déployé
+                    let mut pos = [0u8; 16];
+                    if self.unites_de(p, U_F, &mut pos) > 0 {
+                        self.empiler(Attente::new(ATT_FOOTMAN_DEPLOIE, p, -1));
                     }
                 }
             }
@@ -1022,7 +1050,8 @@ impl Partie {
             self.empiler(Attente::new(ATT_BERSERK, c.proprio, pos as i8));
         } else if c.genre == U_S && genre == ATTACK {
             self.empiler(Attente::new(ATT_SOLDAT, c.proprio, pos as i8));
-        } else if c.genre == U_R && (genre == ATTACK || genre == CONTROL) {
+        } else if c.genre == U_R && (genre == ATTACK || genre == CONTROL) && !self.e.moine_utilise {
+            self.e.moine_utilise = true; // une fois par tour (carte v2)
             self.empiler(Attente::new(ATT_PRIEST, c.proprio, -1));
         }
     }
@@ -1158,6 +1187,15 @@ impl Partie {
                     self.empiler(reste);
                 }
                 self.manoeuvre(pd.joueur, a)?;
+            }
+            ATT_FOOTMAN_DEPLOIE => {
+                // la pièce recrutée est la dernière de la défausse visible (rien n'a été joué depuis)
+                let j = &mut self.e.joueurs[pd.joueur as usize];
+                if a.genre != DEPLOY || j.def_visible.as_slice().last() != Some(&U_F) {
+                    return Err(CoupIllegal(format!("{:?}", a)));
+                }
+                j.def_visible.pop();
+                self.poser(a.cases[0], pd.joueur, U_F, 1);
             }
             g => return Err(CoupIllegal(format!("décision {g}"))),
         }

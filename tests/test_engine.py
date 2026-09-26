@@ -169,6 +169,26 @@ def test_warrior_priest_draws():
     assert all(a.kind != SKIP for a in g.legal_actions())
 
 
+def test_warrior_priest_once_per_turn():
+    """Carte v2 : la pièce piochée peut refaire attaquer le Moine soldat, sans nouvelle pioche."""
+    g = empty_game([["R", "S", "X", "H"], ["A", "C", "L", "E"]])
+    put(g, "b1", 0, "R", 2)
+    put(g, "b2", 1, "A", 2)
+    g.control[g.spec.index["b1"]] = None
+    g.markers_left[0] += 1
+    with_hand(g, 0, ["R"])
+    g.force_draws(0, ["R"])
+    g.apply(find_action(g, "Rb1^"))
+    assert g.pending[-1].kind == "priest" and g.pending[-1].coin == "R"
+    g.apply(find_action(g, "Rb1xb2"))
+    assert not g.pending and g.board[g.spec.index["b2"]].coins == 1
+    assert g.priest_used                            # remis à zéro par la prochaine pièce jouée
+    with_hand(g, 1, ["A"])
+    g.current = 1
+    g.apply(next(a for a in g.legal_actions() if a.kind == "pass"))
+    assert not g.priest_used
+
+
 def test_footman_two_units_and_tactic():
     g = empty_game([["F", "S", "X", "H"], ["A", "C", "L", "E"]])
     put(g, "b1", 0, "F")
@@ -179,6 +199,37 @@ def test_footman_two_units_and_tactic():
     assert "F:" in n
     play_token(g, "F:>Fb1-b2>Fe1-e2")
     assert {g.spec.names[p] for p in g.units_of(0, "F")} == {"b2", "e2"}
+
+
+def test_footman_recruit_deploy():
+    """Carte v2 : un Fantassin recruté alors qu'un Fantassin est déployé peut l'être aussitôt."""
+    g = empty_game([["F", "S", "X", "H"], ["A", "C", "L", "E"]])
+    with_hand(g, 0, ["S", "S"])
+    g.apply(find_action(g, "$F{S}"))              # aucun Fantassin déployé : pas de suite
+    assert not g.pending and g.players[0].disc_up[-1] == "F"
+    put(g, "b1", 0, "F")
+    g.current = 0
+    reserve = g.players[0].reserve["F"]
+    g.apply(find_action(g, "$F{S}"))
+    assert g.pending and g.pending[-1].kind == "footman_deploy"
+    assert names(g, g.legal_actions()) == {"0", "F@e1"}
+    disc_up = len(g.players[0].disc_up)
+    g.apply(find_action(g, "F@e1"))
+    assert {g.spec.names[p] for p in g.units_of(0, "F")} == {"b1", "e1"}
+    assert len(g.players[0].disc_up) == disc_up - 1 and g.players[0].reserve["F"] == reserve - 1
+    conserved(g)
+    # deux Fantassins déployés : plus de déploiement immédiat
+    with_hand(g, 0, ["X"])
+    g.players[0].reserve["F"] += 1                 # réserve épuisée par les deux recrutements
+    g.current = 0
+    g.apply(find_action(g, "$F{X}"))
+    assert not g.pending
+    # relevé : la suite s'écrit « $F{S}>F@e1 »
+    g = empty_game([["F", "S", "X", "H"], ["A", "C", "L", "E"]])
+    put(g, "b1", 0, "F")
+    with_hand(g, 0, ["S"])
+    play_token(g, "$F{S}>F@e1")
+    assert len(g.units_of(0, "F")) == 2
 
 
 def test_lancer_straight_line():

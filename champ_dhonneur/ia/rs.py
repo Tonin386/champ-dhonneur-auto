@@ -47,6 +47,7 @@ def etat_jeu(g: Game) -> dict:
         "manche": g.round, "courant": g.current, "au_trait": g.to_move, "fini": g.done,
         "gagnant": -1 if g.winner is None else g.winner, "marqueurs": list(g.markers_left),
         "premier": g.first_player, "initiative": g.initiative, "init_bougee": g.initiative_moved,
+        "moine_utilise": g.priest_used,
         "premier_manche": g.round_first, "en_draft": g.in_draft,
         "dispo": "".join(d.available) if g.in_draft else "",
         "unites": ["".join(p.units) for p in g.players],
