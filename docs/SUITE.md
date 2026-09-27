@@ -1,8 +1,32 @@
 # État au 27/09/2026 et suite
 
+## Où en est l'entraînement (27/09/2026, fin d'après-midi)
+- Run `runs/continu` (règles v2), profil local `configs/continu-rtx-3070.local.json` : d160×6,
+  réinitialisation tous les 25 itérations (la première a eu lieu à l'itération 29 : 11 933 pas en
+  16 min), évaluation toutes les 2 itérations contre le meilleur modèle (100 paires, décide de la
+  promotion, `eval_promotion_z` 1,28) et l'ancre regles_v1_0234 (40 paires, suivi).
+- Première promotion d'un réseau appris à l'itération 24 (0,58 contre l'enseignant regles_v1_0234,
+  IC [+22, +94] Elo) : depuis, l'auto-jeu est joué par un réseau v2.
+- Le réseau réinitialisé (itération 30) : 0,56 contre iter_0024 (+40 [−7, +89]), 0,64 contre
+  regles_v1_0234 ; itération 32 : 0,55 (+35 [−10, +81]) et 0,68 (Elo +918, glouton = 0), non promu
+  à 1,96 écart type, il l'aurait été à 1,28 (critère en place depuis l'itération 32).
+- Temps par itération (itération 32) : auto-jeu 260 s, apprentissage 28 s, unités 25 s, évaluation
+  222 s toutes les 2 itérations → ≈ 14 min pour 2 itérations (≈ 22 min le matin).
+- Bot (web, analyse) : draft exact, c_scale 0,2, vagues de 16 simulations (`bots/neural.py`).
+
+## Suite proposée
+1. Laisser tourner ; suivre la progression contre regles_v1_0234 et les promotions.
+2. c_scale de l'auto-jeu (cible π') : 0,2 gagne en jeu ; l'essayer à l'entraînement demande une
+   comparaison de runs (deux courts runs repris de la même itération, ou une ablation hors ligne).
+3. Draft exact en auto-jeu (`autojeu.draft_exact`) : gain mesuré en jeu seulement.
+4. Évaluation : ≈ 30 % du temps GPU (280 parties à 128 simulations toutes les 2 itérations).
+   Pistes : `eval_tous` 3, ou arrêt séquentiel (SPRT) du match contre le meilleur.
+5. Débit : le GPU est le goulot (auto-jeu 89 % dans le réseau). Serveur d'inférence unique
+   (un seul contexte CUDA pour les 3 processus) à mesurer.
+6. Réutilisation de l'arbre entre les coups pour le bot (gain à temps de réflexion égal).
+
 ## Nouveau départ : règles des cartes v2 (27/09/2026)
-- **Pour lancer demain** : `make continu` (ou `docker compose --profile continu up -d`). Le run est prêt
-  à l'itération 0 et n'a pas été lancé.
+- Lancé le 27/09 au matin (`make continu`).
 - Règles corrigées : Moine soldat une fois par tour, Fantassin recruté déployable aussitôt, Berserk
   (après une attaque ou un déplacement, attaquer ou se déplacer à nouveau ; plus de contrôle). Les
   données et réseaux antérieurs suivaient les anciennes règles.
