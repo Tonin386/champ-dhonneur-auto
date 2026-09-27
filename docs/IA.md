@@ -175,6 +175,7 @@ Valeurs par défaut du code ; `configs/gpu.json` les ajuste pour un GPU. Toutes 
 | `eval_promotion` | elo | `elo` : meilleur.pt = meilleur Elo ; `ic` : promu seulement s'il bat le meilleur (borne basse de l'IC 95 % > 0) |
 | `autojeu_reseau` | dernier | réseau de l'auto-jeu : `dernier` (le plus récent) ou `meilleur` (le meilleur démontré, `meilleur.pt`) |
 | `reinit_tous`, `reinit_reutilisation` | 0, 4 | toutes les N itérations, réseau neuf entraîné depuis zéro sur la fenêtre (voir « Plasticité ») |
+| `reinit_modele` | {} | architecture du réseau neuf des réinitialisations (ex. `{"d": 192, "tetes": 6}`) ; promu seulement s'il bat le meilleur |
 | `valeur_lambda` | 0 | > 0 : retours TD(λ) à la place de la valeur de recherche dans la cible de valeur |
 | `inference_compilee` | false | réseau compilé (`torch.compile`, graphes CUDA) pour l'auto-jeu et les matchs Rust : +40 % de positions/s sur RTX 3070 |
 | `travailleurs_evaluation` | 0 | processus des évaluations (0 = `travailleurs`) ; utile avec le moteur Rust, qui sature le GPU avec peu de processus |

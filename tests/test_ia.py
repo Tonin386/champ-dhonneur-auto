@@ -371,6 +371,23 @@ def test_reinitialisation(tmp_path):
     assert json.loads((tmp_path / "run" / "etat.json").read_text())["derniere_reinit"] == 3
 
 
+def test_reinitialisation_autre_architecture(tmp_path):
+    """reinit_modele : le réseau neuf d'une réinitialisation peut changer de taille ; la reprise suit
+    l'architecture du dernier modèle."""
+    import torch
+    from champ_dhonneur.ia.entrainement import ConfigEntrainement, Entraineur
+    cfg = ConfigEntrainement()
+    cfg.appliquer([f"dossier={tmp_path / 'run'}", "iterations=2", "travailleurs=0",
+                   "parties_par_iteration=2", "amorce_iterations=1", "amorce_simulations=6",
+                   "autojeu.simulations=8", "autojeu.simulations_rapides=4", "autojeu.max_manches=10",
+                   "fenetre_min=10", "lot=16", "eval_tous=0", "reinit_tous=2", "reinit_reutilisation=1",
+                   '"modele"={"d": 32, "couches": 1, "tetes": 2}'.replace('"modele"', "modele"),
+                   '"reinit_modele"={"d": 48, "couches": 2}'.replace('"reinit_modele"', "reinit_modele")])
+    Entraineur(cfg).executer()
+    ck = torch.load(tmp_path / "run" / "modeles" / "dernier.pt", weights_only=False)
+    assert ck["config"]["d"] == 48 and ck["config"]["couches"] == 2
+
+
 def test_bot_ia(tmp_path):
     from champ_dhonneur.bots import make_bot
     from champ_dhonneur.ia.modele import ConfigModele, ReseauChamp, sauver

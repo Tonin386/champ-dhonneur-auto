@@ -79,6 +79,9 @@ class ConfigEntrainement:
     # plasticité (mesuré : log-loss de valeur 0,73 contre 0,58 pour un réseau neuf, mêmes données)
     reinit_tous: int = 0
     reinit_reutilisation: float = 4.0
+    # architecture du réseau neuf des réinitialisations (clés de ConfigModele, ex. {"d": 192, "tetes": 6}) ;
+    # vide : la même. Le réseau neuf n'est promu que s'il bat le meilleur (voir eval_promotion)
+    reinit_modele: dict = field(default_factory=dict)
     eval_protocole: str = "aleatoire"  # "draft" : les matchs d'évaluation commencent par le draft
     # valeur dynamique des unités (ia/valeurs.py) et recalibrage de l'échelle du scoreur
     unites: dict = field(default_factory=lambda: {"actif": False, "pools": 256, "pioches": 2,
@@ -576,6 +579,9 @@ class Entraineur:
         torch = self.torch
         cfg = self.cfg
         t0 = time.time()
+        if cfg.reinit_modele:
+            cfg.modele = ConfigModele(**{**asdict(cfg.modele), **cfg.reinit_modele})
+            ecrire_atomique(self.dir / "config.json", json.dumps(asdict(cfg), indent=1, ensure_ascii=False))
         self.model = ReseauChamp(cfg.modele).to(self.dev)
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=cfg.lr,
                                      weight_decay=cfg.poids_decroissance, betas=(0.9, 0.99))

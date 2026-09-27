@@ -17,6 +17,16 @@
 - À surveiller : la première promotion d'un réseau appris (`meilleur` dans `champ suivi`), puis la
   progression contre l'ancre regles_v1_0234.
 
+## Mesures du 27/09/2026 (regles_v1_0234, règles v2, draft, 128 simulations, 200 paires)
+- C1 (arêtes face cachée sans pièce) contre l'ancienne recherche : +4 [−30, +37] → sans effet mesurable
+  (correction conservée).
+- Draft exact (`draft_exact=8`) : +33 [+1, +66] contre la recherche standard, −24 [−54, +5] contre
+  l'ancienne recherche → signal faible, à confirmer par SPRT avant de l'activer en auto-jeu.
+- Vagues de 16 simulations (bot Rust) à 800 simulations : −9 [−44, +25] (150 paires) → sans coût
+  mesurable : le bot profite pleinement de la vitesse de la recherche Rust.
+- Nouveau run : le réseau neuf bat glouton à 98 % dès l'itération 2 ; contre l'enseignant : 0,12 (it. 2),
+  0,20 (it. 4).
+
 # État au 26/09/2026
 
 ## Mesures clés (RTX 3070, moteur Rust, draft, 128 simulations)
