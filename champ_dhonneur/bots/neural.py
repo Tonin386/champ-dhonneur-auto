@@ -29,11 +29,13 @@ PARALLELE_RUST = 16   # simulations par vague (perte virtuelle) de la recherche 
 # (mesuré : sans coût à 800 simulations, −9 Elo [−44, +25])
 DRAFT_EXACT = 8       # > 0 : choix de carte exact au draft (tirages par répartition, rust/src/draft.rs)
 # (mesuré à 128 simulations : +33 Elo [+1, +66] puis +35 [−1, +72] contre le draft par la recherche)
+C_SCALE = 0.2         # poids de la valeur des coups à la racine, σ(Q) (0,1 par défaut) ; mesuré à
+# 128 simulations contre 0,1 : +18 [−17, +55] puis +44 [+8, +82] (0,05 : −73 ; 0,3 : +18 ; 0,5 : +26)
 
 
 def agent_rust() -> dict:
     """Réglages de la recherche Rust du bot et de l'analyse."""
-    return {"parallele": PARALLELE_RUST, "draft_exact": DRAFT_EXACT}
+    return {"parallele": PARALLELE_RUST, "draft_exact": DRAFT_EXACT, "c_scale": C_SCALE}
 _CACHE: dict[tuple, object] = {}
 _VERSIONS: dict[tuple, bool] = {}
 

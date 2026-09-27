@@ -31,7 +31,10 @@
 
 - Le bot joue désormais le draft exact (`DRAFT_EXACT = 8`, `bots/neural.py`) ; l'auto-jeu et les
   matchs d'évaluation gardent le draft par la recherche.
-- c_scale : pente nette vers le haut (0,05 ≪ 0,1 ≤ 0,2) → essayer 0,3 et 0,5 (bot et cible π').
+- c_scale, seconde série (150 paires contre 0,1) : 0,2 **+44 [+8, +82]**, 0,3 +18 [−15, +53],
+  0,5 +26 [−12, +64]. Avec la première mesure de 0,2 (+18) : ≈ +30 [+4, +56] → le bot joue
+  `C_SCALE = 0.2` (`bots/neural.py`, aussi pour l'analyse). L'auto-jeu garde 0,1 : c_scale rend
+  aussi la cible π' plus tranchée, effet sur l'apprentissage non mesuré.
 
 ## Taille du réseau (27/09/2026) : d160 reste le meilleur
 Réseaux entraînés depuis zéro sur les mêmes données v2 (itérations 1-17, 928 000 exemples,
