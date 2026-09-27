@@ -72,6 +72,7 @@ réutilisation 4, lots de 512 comme la réinitialisation), mesurés sur l'itéra
 
 À temps égal (simulations au prorata du débit, 200 paires) : d160@128 bat d192@102 de
 **+43 [+8, +78]** et d128@149 de +21 [−12, +54] (Bradley-Terry : d160 0, d128 −22, d192 −41).
+À simulations égales (128) : d160 ≈ d192 (−4 [−37, +30]), d160 bat d128 de +21 [−13, +55].
 La valeur ne gagne rien à la taille ; d128 n'est que 16 % plus rapide (le réseau n'est pas limité
 par le calcul à cette taille). → On garde d160 (pas de `reinit_modele`).
 
