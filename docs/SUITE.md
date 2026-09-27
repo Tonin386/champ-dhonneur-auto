@@ -17,6 +17,31 @@
 - À surveiller : la première promotion d'un réseau appris (`meilleur` dans `champ suivi`), puis la
   progression contre l'ancre regles_v1_0234.
 
+## Réglage de la recherche (27/09/2026, après-midi ; regles_v1_0234, règles v2, draft, 128 simulations, 150 paires)
+Écart de chaque variante contre la recherche par défaut (c_scale 0,1, c_puct 1,25, fpu 0,25, m 32) :
+
+| Variante | Elo [IC 95 %] |
+|---|---|
+| draft exact (`draft_exact=8`) | **+35 [−1, +72]** (avec la mesure du matin : ≈ +34 [+10, +58]) |
+| c_scale 0,05 | **−73 [−114, −33]** |
+| c_scale 0,2 | +18 [−17, +55] |
+| c_puct 0,8 / 2,0 | +22 [−14, +58] / +7 [−29, +43] |
+| fpu 0 / 0,5 | +0 [−35, +35] / −1 [−37, +34] |
+| m 16 | −16 [−52, +19] |
+
+- Le bot joue désormais le draft exact (`DRAFT_EXACT = 8`, `bots/neural.py`) ; l'auto-jeu et les
+  matchs d'évaluation gardent le draft par la recherche.
+- c_scale : pente nette vers le haut (0,05 ≪ 0,1 ≤ 0,2) → essayer 0,3 et 0,5 (bot et cible π').
+
+## Débit (27/09/2026)
+- L'auto-jeu passe 89 % de son temps dans le réseau (35 s contre 4,2 s pour le moteur Rust sur
+  1 200 pas) : le GPU est le goulot. Ses lots font toujours 384 positions (`simultanees`), qui
+  étaient complétées jusqu'au palier 512 : paliers intermédiaires (384, 768, 1536, 3072) → −22 % de
+  temps de réseau par lot, +25 à 38 % de pas d'auto-jeu par seconde.
+- Les matchs d'évaluation de l'entraînement (200 parties, `parallele` 1) attendaient le GPU à
+  chaque simulation : 5 à 7 min toutes les 2 itérations. `eval_parallele` (4) divise d'autant les
+  appels au réseau.
+
 ## Mesures du 27/09/2026 (regles_v1_0234, règles v2, draft, 128 simulations, 200 paires)
 - C1 (arêtes face cachée sans pièce) contre l'ancienne recherche : +4 [−30, +37] → sans effet mesurable
   (correction conservée).

@@ -27,7 +27,8 @@ from .base import Bot
 DEFAUTS = ["modeles/meilleur.pt", "runs/continu/modeles/meilleur.pt", "runs/principal/modeles/meilleur.pt"]
 PARALLELE_RUST = 16   # simulations par vague (perte virtuelle) de la recherche Rust du bot
 # (mesuré : sans coût à 800 simulations, −9 Elo [−44, +25])
-DRAFT_EXACT = 0       # > 0 : choix de carte exact au draft (tirages par répartition, rust/src/draft.rs)
+DRAFT_EXACT = 8       # > 0 : choix de carte exact au draft (tirages par répartition, rust/src/draft.rs)
+# (mesuré à 128 simulations : +33 Elo [+1, +66] puis +35 [−1, +72] contre le draft par la recherche)
 
 
 def agent_rust() -> dict:

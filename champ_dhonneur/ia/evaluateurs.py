@@ -60,9 +60,11 @@ class EvaluateurReseau(Evaluateur):
     jusqu'à des tailles fixes (`PALIERS_LOT` × `PALIERS_ACTIONS`), une compilation par palier ;
     mesuré sur RTX 3070 : +40 % de positions/s, sorties aussi proches du calcul fp32 qu'en
     exécution directe. `recharger` copie de nouveaux poids en place, sans recompiler.
+    Paliers intermédiaires (384, 768…) : l'auto-jeu à 384 parties simultanées ne complète plus
+    ses lots jusqu'à 512 (−22 % de temps de réseau par lot, mesuré sur RTX 3070).
     """
 
-    PALIERS_LOT = (128, 256, 512, 1024, 2048, 4096)
+    PALIERS_LOT = (128, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096)
     PALIERS_ACTIONS = (16, 32, 64)
     LOT_MAX = 8192   # au-delà (draft exact de centaines de parties à la fois…), évaluation par morceaux
 
@@ -84,6 +86,12 @@ class EvaluateurReseau(Evaluateur):
         self.model = model.to(self.device, dtype=self.dtype).eval()
         self.compile = None
         if compiler and self.device.type == "cuda":
+            import torch._dynamo.config as dynamo
+            # une compilation par palier (lot × actions) : au-delà de la limite de recompilations
+            # (8 par défaut), les nouveaux paliers seraient exécutés sans compilation
+            nom = "recompile_limit" if hasattr(dynamo, "recompile_limit") else "cache_size_limit"
+            n = len(self.PALIERS_LOT) * len(self.PALIERS_ACTIONS) * 2
+            setattr(dynamo, nom, max(getattr(dynamo, nom), n))
             self.compile = torch.compile(self.model, mode="reduce-overhead", dynamic=False)
         self.n_evals = 0
         self.n_lots = 0

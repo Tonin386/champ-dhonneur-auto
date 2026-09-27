@@ -377,6 +377,29 @@ def test_draft_exact_autojeu_et_match():
     assert len(r["parties"]) == 2
 
 
+def test_bot_au_draft_avec_le_draft_exact(tmp_path):
+    """Au draft, la recherche du bot (réglages `agent_rust`, choix de carte exact) renvoie une carte
+    légale, au nombre de simulations comme au temps, et l'analyse d'une position de draft aboutit."""
+    pytest.importorskip("torch")
+    from champ_dhonneur.bots.neural import agent_rust
+    from champ_dhonneur.ia.analyse import analyser, bot_analyse
+    from champ_dhonneur.ia.modele import ConfigModele, ReseauChamp, sauver
+    from champ_dhonneur.ia.recherche import Limite
+    agent = {**agent_rust(), "draft_exact": 2}
+    ev = rs.EvaluateurLotUniforme()
+    for graine in range(3):
+        g = Game("2J", "draft", seed=graine)
+        for _ in range(graine * 2):
+            g.apply(g.legal_actions()[0])
+        for r in (rs.rechercher(g, ev, simulations=32, agent=agent, graine=graine),
+                  rs.rechercher_temps(g, ev, 0.2, agent, graine)):
+            assert r.action in g.legal_actions() and abs(float(r.politique.sum()) - 1) < 1e-3
+    sauver(tmp_path / "m.pt", ReseauChamp(ConfigModele(d=16, couches=1, tetes=2)))
+    bot = bot_analyse(64, str(tmp_path / "m.pt"), "cpu")
+    a = analyser(Game("2J", "draft", seed=4), bot, limite=Limite(profondeur=2))
+    assert a
+
+
 def test_recherche_rust_progressive():
     """Recherche progressive Rust : passes successives sur le même arbre (simulations cumulées),
     lignes principales exportées ; au temps, au moins une passe."""
