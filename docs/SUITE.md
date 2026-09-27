@@ -10,8 +10,10 @@
 - Le réseau réinitialisé (itération 30) : 0,56 contre iter_0024 (+40 [−7, +89]), 0,64 contre
   regles_v1_0234 ; itération 32 : 0,55 (+35 [−10, +81]) et 0,68 (Elo +918, glouton = 0), non promu
   à 1,96 écart type, il l'aurait été à 1,28 (critère en place depuis l'itération 32).
-- Temps par itération (itération 32) : auto-jeu 260 s, apprentissage 28 s, unités 25 s, évaluation
-  222 s toutes les 2 itérations → ≈ 14 min pour 2 itérations (≈ 22 min le matin).
+- Itération 34 : promu (iter_0034) : 0,605 contre iter_0024 (+74 [+25, +126]), 0,66 contre
+  regles_v1_0234 (+117 [+43, +203]), Elo +940 — la réinitialisation a payé.
+- Temps par itération (itération 34) : auto-jeu 233 s, apprentissage 24 s, unités 15 s, évaluation
+  230 s toutes les 2 itérations → ≈ 13 min pour 2 itérations (≈ 22 min le matin).
 - Bot (web, analyse) : draft exact, c_scale 0,2, vagues de 16 simulations (`bots/neural.py`).
 
 ## Suite proposée
