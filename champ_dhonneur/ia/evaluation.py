@@ -406,11 +406,13 @@ def matchs_contre(chemin: str, adversaires: list[tuple[str, dict, str]], paires:
                   seed: int = 0, simulations: int = 128, dispositif: str = "cuda",
                   protocole: str = "draft", releves: int = 0, compiler: bool = True,
                   nom: str = "candidat", simultanees: int = 1024,
-                  agent: dict | None = None) -> dict[str, dict]:
+                  agent: dict | None = None,
+                  paires_adversaires: dict[str, int] | None = None) -> dict[str, dict]:
     """Le réseau `chemin` contre plusieurs réseaux [(chemin, réglages de recherche, nom)], en
     matchs appariés sur les mêmes graines, joués ensemble dans un seul match Rust (lots pleins,
     une seule fin de match). Renvoie le bilan de chaque match (du point de vue de `chemin`).
-    `agent` : réglages de recherche communs à tous les agents (ex. {"parallele": 4})."""
+    `agent` : réglages de recherche communs à tous les agents (ex. {"parallele": 4}) ;
+    `paires_adversaires` : nombre de paires d'un adversaire (par nom), s'il en joue moins."""
     from . import rs
     if not adversaires:
         return {}
@@ -419,7 +421,9 @@ def matchs_contre(chemin: str, adversaires: list[tuple[str, dict, str]], paires:
                                   [base] + [{**base, **r} for _, r, _ in adversaires], simulations,
                                   dispositif, compiler)
     graines = graines_appariees(paires, seed)
-    parties = [p for g in graines for k in range(1, len(agents)) for p in ((g, 0, k), (g, k, 0))]
+    n_adv = [min(paires, (paires_adversaires or {}).get(n, paires)) for _, _, n in adversaires]
+    parties = [p for i, g in enumerate(graines) for k in range(1, len(agents)) if i < n_adv[k - 1]
+               for p in ((g, 0, k), (g, k, 0))]
     noms = [nom] + [n for _, _, n in adversaires]
     r = rs.jouer_match_rs(evs, agents, parties, protocole == "draft", 150, simultanees,
                           releves * len(adversaires), noms)

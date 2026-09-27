@@ -373,6 +373,29 @@ def test_reinitialisation(tmp_path):
     assert json.loads((tmp_path / "run" / "etat.json").read_text())["derniere_reinit"] == 3
 
 
+def test_evaluation_ancre_reseau(tmp_path):
+    """Évaluation contre une ancre figée (.pt) : moins de paires que contre le modèle qui décide
+    de la promotion (eval_paires_ancres), recherche par vagues (eval_parallele)."""
+    pytest.importorskip("champ_rs")
+    import json
+
+    from champ_dhonneur.ia.entrainement import ConfigEntrainement, Entraineur
+    from champ_dhonneur.ia.modele import ConfigModele, ReseauChamp, sauver
+    sauver(tmp_path / "ancre.pt", ReseauChamp(ConfigModele(d=32, couches=1, tetes=2)))
+    cfg = ConfigEntrainement()
+    cfg.appliquer([f"dossier={tmp_path / 'run'}", "iterations=2", "travailleurs=0",
+                   "parties_par_iteration=2", "amorce_iterations=1", "amorce_simulations=6",
+                   "autojeu.simulations=8", "autojeu.simulations_rapides=4", "autojeu.max_manches=10",
+                   "fenetre_min=10", "lot=16", "eval_tous=1", "eval_simulations=4", "eval_paires_reseaux=2",
+                   "eval_paires_ancres=1", "eval_parallele=2", "eval_precedent=true", "eval_protocole=draft",
+                   f'eval_ancres=["{(tmp_path / "ancre.pt").as_posix()}"]',
+                   '"modele"={"d": 32, "couches": 1, "tetes": 2}'.replace('"modele"', "modele")])
+    Entraineur(cfg).executer()
+    lignes = [json.loads(l) for l in (tmp_path / "run" / "journal.jsonl").read_text().splitlines()]
+    parties = {k: m["victoires"] + m["nulles"] + m["defaites"] for k, m in lignes[1]["evaluation"]["matchs"].items()}
+    assert parties == {"ancre": 2, "iter_0001": 4}
+
+
 def test_reinitialisation_autre_architecture(tmp_path):
     """reinit_modele : le réseau neuf d'une réinitialisation peut changer de taille ; la reprise suit
     l'architecture du dernier modèle."""

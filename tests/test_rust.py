@@ -312,8 +312,9 @@ def test_tournoi_et_evaluations_rust(tmp_path):
     assert len(r["matchs"]) == 6 and all(m["parties"] == 4 for m in r["matchs"].values())
     assert set(r["elo"]) == set(r["noms"])
     res = matchs_contre(a, [(b, {}, "m1"), (a, {"simulations": 4}, "m0bis")], paires=2, simulations=8,
-                        dispositif="cpu", compiler=False, releves=1, nom="m0", agent={"parallele": 4})
-    assert set(res) == {"m1", "m0bis"} and all(x["parties"] == 4 for x in res.values())
+                        dispositif="cpu", compiler=False, releves=1, nom="m0", agent={"parallele": 4},
+                        paires_adversaires={"m0bis": 1})
+    assert set(res) == {"m1", "m0bis"} and res["m1"]["parties"] == 4 and res["m0bis"]["parties"] == 2
     assert all(len(x["releves"]) <= 1 for x in res.values())
     s = sprt_reseaux(a, b, max_paires=3, simulations=4, dispositif="cpu", compiler=False)
     assert s["decision"] == "indécis" and s["paires"] <= 3     # moins de min_paires paires

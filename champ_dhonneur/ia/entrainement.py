@@ -103,6 +103,9 @@ class ConfigEntrainement:
     # centaines de parties, les lots sont petits et l'évaluation attend le GPU à chaque simulation :
     # 4 à 8 divisent d'autant le nombre d'appels au réseau
     eval_parallele: int = 1
+    # > 0 : paires contre les ancres figées (.pt d'eval_ancres), moins que contre le meilleur modèle
+    # qui décide de la promotion (le suivi de la progression demande moins de précision)
+    eval_paires_ancres: int = 0
     # promotion de meilleur.pt : "elo" (meilleur Elo Bradley-Terry, sans marge) ou "ic" (le nouveau
     # modèle bat le meilleur, borne basse de l'intervalle de confiance à 95 % de l'écart > 0)
     eval_promotion: str = "elo"
@@ -732,13 +735,17 @@ class Entraineur:
 
         # les matchs contre les bots (moteur Python, limités par le CPU) se jouent en même temps
         # que ceux contre les réseaux (moteur Rust, GPU de ce processus)
+        ancres = {nom_spec(spec) for spec in cfg.eval_ancres} - {meilleur, prec}
+        paires_ancres = ({n: cfg.eval_paires_ancres for _, n in reseaux if n in ancres}
+                         if cfg.eval_paires_ancres > 0 else None)
         with ThreadPoolExecutor(max(1, len(bots))) as tex:
             futurs = [tex.submit(jouer_bot, adv) for adv in bots] if self.pool is not None else []
             resultats = matchs_contre(
                 chemin, [(*spec_reseau(spec), nom_adv) for spec, nom_adv in reseaux],
                 cfg.eval_paires_reseaux, 10_000 + it, cfg.eval_simulations, str(self.dev),
                 cfg.eval_protocole, cfg.releves_evaluation, cfg.inference_compilee, nom,
-                agent={"parallele": cfg.eval_parallele} if cfg.eval_parallele > 1 else None)
+                agent={"parallele": cfg.eval_parallele} if cfg.eval_parallele > 1 else None,
+                paires_adversaires=paires_ancres)
             for (spec, nom_adv), f in zip(bots, futurs):
                 resultats[nom_adv] = f.result()
             for spec, nom_adv in bots[len(futurs):]:
