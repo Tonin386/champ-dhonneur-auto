@@ -175,6 +175,7 @@ Valeurs par défaut du code ; `configs/gpu.json` les ajuste pour un GPU. Toutes 
 | `eval_paires_ancres` | 0 | > 0 : paires contre les ancres figées (`.pt` d'`eval_ancres`), moins que contre le meilleur modèle qui décide de la promotion |
 | `eval_parallele` | 1 | feuilles évaluées ensemble par recherche dans ces matchs : 4 à 8 divisent d'autant les appels au réseau (évaluation limitée par la latence du GPU) |
 | `eval_promotion` | elo | `elo` : meilleur.pt = meilleur Elo ; `ic` : promu seulement s'il bat le meilleur (borne basse de l'IC 95 % > 0) |
+| `eval_promotion_z` | 1,96 | `ic` : promu si l'écart moins z écarts types est > 0 (1,96 : IC 95 % ; 1,28 : 90 % unilatéral, promotion plus rapide d'un réseau probablement meilleur) |
 | `autojeu_reseau` | dernier | réseau de l'auto-jeu : `dernier` (le plus récent) ou `meilleur` (le meilleur démontré, `meilleur.pt`) |
 | `reinit_tous`, `reinit_reutilisation` | 0, 4 | toutes les N itérations, réseau neuf entraîné depuis zéro sur la fenêtre (voir « Plasticité ») |
 | `reinit_modele` | {} | architecture du réseau neuf des réinitialisations (ex. `{"d": 192, "tetes": 6}`) ; promu seulement s'il bat le meilleur |

@@ -109,6 +109,9 @@ class ConfigEntrainement:
     # promotion de meilleur.pt : "elo" (meilleur Elo Bradley-Terry, sans marge) ou "ic" (le nouveau
     # modèle bat le meilleur, borne basse de l'intervalle de confiance à 95 % de l'écart > 0)
     eval_promotion: str = "elo"
+    # "ic" : promu si l'écart moins z écarts types est > 0 (1,96 : borne basse de l'IC 95 % ;
+    # 1,28 : 90 % unilatéral, promeut plus tôt un réseau probablement meilleur)
+    eval_promotion_z: float = 1.96
     inference_compilee: bool = False # réseau compilé (torch.compile) pour l'auto-jeu et l'évaluation
     # réseau qui joue l'auto-jeu : "dernier" (le plus récent, comme AlphaZero) ou "meilleur" (le
     # meilleur démontré, comme AlphaGo Zero : avec eval_promotion "ic", un réseau n'est promu que
@@ -701,8 +704,8 @@ class Entraineur:
         from concurrent.futures import ThreadPoolExecutor
 
         from . import rs
-        from .evaluation import (ClassementElo, agent_depuis_spec, match, match_parallele, matchs_contre,
-                                 nom_spec, spec_reseau)
+        from .evaluation import (ClassementElo, agent_depuis_spec, elo_borne_basse, match, match_parallele,
+                                 matchs_contre, nom_spec, spec_reseau)
         cfg = self.cfg
         nom = f"iter_{it:04d}"
         chemin = str(self.dir / "modeles" / f"{nom}.pt")
@@ -764,7 +767,7 @@ class Entraineur:
             promu = True
         elif cfg.eval_promotion == "ic":
             r = rapports.get(meilleur)
-            promu = r is not None and r.get("elo_bas", -1.0) > 0
+            promu = r is not None and elo_borne_basse(r.get("pentanomial") or [], cfg.eval_promotion_z) > 0
         else:
             promu = elo.get(nom, -1e9) >= elo.get(meilleur, -1e9)
         if promu:

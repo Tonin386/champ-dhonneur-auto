@@ -298,6 +298,15 @@ def test_statistiques_par_paire_et_sprt():
         "iter.pt", {"simulations": 512, "cle_publique": False})
 
 
+def test_borne_basse_de_promotion():
+    """elo_borne_basse à 1,96 écart type = borne basse de l'IC 95 % ; plus basse si z grandit."""
+    from champ_dhonneur.ia.evaluation import elo_borne_basse, stats_paires
+    penta = [5, 20, 40, 25, 10]
+    assert abs(elo_borne_basse(penta) - stats_paires(penta)["elo_bas"]) < 0.1
+    assert elo_borne_basse(penta, 1.28) > elo_borne_basse(penta, 1.96)
+    assert elo_borne_basse([]) < -1e8
+
+
 def test_retours_lambda():
     """TD(λ) le long de chaque partie, points de vue alternés, parties nulles laissées à q."""
     from champ_dhonneur.ia.cibles import retours_lambda

@@ -188,6 +188,15 @@ def stats_paires(penta: list[int]) -> dict:
             "elo_haut": round(_elo(m + 1.96 * se), 1)}
 
 
+def elo_borne_basse(penta: list[int], z: float = 1.96) -> float:
+    """Borne basse de l'écart Elo à z écarts types (1,96 : celle de l'IC 95 % de `stats_paires`)."""
+    n, m, var = _moments(penta)
+    if n == 0:
+        return -1e9
+    se = math.sqrt(var / n) if n > 1 else 0.5
+    return _elo(m - z * se)
+
+
 def llr_sprt(penta: list[int], elo0: float, elo1: float) -> float:
     """Log-rapport de vraisemblance de H1 (écart elo1) contre H0 (écart elo0), approximation
     GSPRT sur les scores de paires : N (s1 − s0)(2 m − s0 − s1) / (2 σ²)."""
