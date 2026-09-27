@@ -33,6 +33,21 @@
   matchs d'évaluation gardent le draft par la recherche.
 - c_scale : pente nette vers le haut (0,05 ≪ 0,1 ≤ 0,2) → essayer 0,3 et 0,5 (bot et cible π').
 
+## Taille du réseau (27/09/2026) : d160 reste le meilleur
+Réseaux entraînés depuis zéro sur les mêmes données v2 (itérations 1-17, 928 000 exemples,
+réutilisation 4, lots de 512 comme la réinitialisation), mesurés sur l'itération 18 :
+
+| Réseau | log-loss valeur | KL politique | 1er coup = cible | positions/s (lots de 384) |
+|---|---|---|---|---|
+| d128×6 (1,4 M) | 0,5572 | 0,387 | 0,764 | 26 200 |
+| **d160×6 (2,2 M)** | **0,5542** | **0,353** | **0,777** | 22 500 |
+| d192×6 (3,2 M) | 0,5572 | 0,362 | 0,771 | 17 900 |
+
+À temps égal (simulations au prorata du débit, 200 paires) : d160@128 bat d192@102 de
+**+43 [+8, +78]** et d128@149 de +21 [−12, +54] (Bradley-Terry : d160 0, d128 −22, d192 −41).
+La valeur ne gagne rien à la taille ; d128 n'est que 16 % plus rapide (le réseau n'est pas limité
+par le calcul à cette taille). → On garde d160 (pas de `reinit_modele`).
+
 ## Débit (27/09/2026)
 - L'auto-jeu passe 89 % de son temps dans le réseau (35 s contre 4,2 s pour le moteur Rust sur
   1 200 pas) : le GPU est le goulot. Ses lots font toujours 384 positions (`simultanees`), qui
@@ -40,7 +55,20 @@
   temps de réseau par lot, +25 à 38 % de pas d'auto-jeu par seconde.
 - Les matchs d'évaluation de l'entraînement (200 parties, `parallele` 1) attendaient le GPU à
   chaque simulation : 5 à 7 min toutes les 2 itérations. `eval_parallele` (4) divise d'autant les
-  appels au réseau.
+  appels au réseau. Mais le coût de fond est le volume : 100 paires à 128 simulations par décision
+  ≈ 4,4 M d'évaluations, soit 30 % de deux itérations d'auto-jeu (14,7 M) ; 200 paires en doublent
+  le coût. Profil d'un match : la fin (dernières 5 % de parties) ne coûte que ≈ 10 % du temps ; la
+  première évaluation après un redémarrage compile les paliers (≈ 3 min).
+- Apprentissage : 7 à 9 synchronisations GPU par pas (`.item()` des pertes, sélections booléennes
+  des pertes auxiliaires) supprimées, moyenne mobile en un seul `_foreach_lerp_` : −17 % par pas ;
+  `compiler` (torch.compile de l'apprentissage) : −30 % de plus. Le temps par pas ne dépendait
+  presque pas de la taille du réseau (d128 165 ms, d192 180 ms sous contention) : surcoût, pas calcul.
+- Lots plus grands que 384 : −7 % par position à 768, −14 % à 1536 seulement (GPU déjà saturé).
+- Recherche par vagues à 128 simulations (v2_0014, 200 paires) : parallele 4 −28 [−59, +2],
+  parallele 8 +12 [−19, +43] → pas de coût établi ; `eval_parallele` 4 dans le profil local.
+- Résultat sur l'entraînement (RTX 3070) : auto-jeu 390 → 260-300 s par itération, apprentissage
+  70-90 → 35-40 s ; une évaluation (400 parties à 128 simulations) ≈ 450 s, ramenée à 280 parties
+  (`eval_paires_ancres` 40 : l'ancre regles_v1_0234 ne sert plus qu'au suivi).
 
 ## Mesures du 27/09/2026 (regles_v1_0234, règles v2, draft, 128 simulations, 200 paires)
 - C1 (arêtes face cachée sans pièce) contre l'ancienne recherche : +4 [−30, +37] → sans effet mesurable

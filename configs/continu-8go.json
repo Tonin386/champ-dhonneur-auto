@@ -75,5 +75,6 @@
  "eval_precedent": false,
  "eval_promotion": "ic",
  "eval_paires_reseaux": 100,
+ "eval_parallele": 4,
  "autojeu_reseau": "meilleur"
 }
