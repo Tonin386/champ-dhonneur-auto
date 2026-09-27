@@ -290,6 +290,8 @@ def test_statistiques_par_paire_et_sprt():
     bas, haut = bornes_sprt(0.05, 0.05)
     assert bas < 0 < haut
     assert llr_sprt([2, 10, 30, 30, 28], 0, 20) > 0 > llr_sprt([28, 30, 30, 10, 2], 0, 20)
+    # deux paires identiques : variance nulle, mais pas de LLR démesuré
+    assert abs(llr_sprt([0, 0, 2, 0, 0], 0, 20)) < 0.5
     assert spec_reseau("glouton") is None
     assert spec_reseau("m/iter_0171.pt") == ("m/iter_0171.pt", {})
     assert spec_reseau("iter.pt:simulations=512,cle_publique=false") == (

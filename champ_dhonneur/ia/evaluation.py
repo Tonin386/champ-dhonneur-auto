@@ -194,7 +194,8 @@ def llr_sprt(penta: list[int], elo0: float, elo1: float) -> float:
     n, m, var = _moments(penta)
     if n < 2:
         return 0.0
-    var = max(var, 1e-4)
+    # plancher : quelques paires toutes identiques donneraient une variance nulle et un LLR infini
+    var = max(var, 1e-2)
     s0, s1 = _score_elo(elo0), _score_elo(elo1)
     return n * (s1 - s0) * (2 * m - s0 - s1) / (2 * var)
 
@@ -429,11 +430,12 @@ def matchs_contre(chemin: str, adversaires: list[tuple[str, dict, str]], paires:
 
 def sprt_reseaux(chemin_a: str, chemin_b: str, elo0: float = 0.0, elo1: float = 20.0,
                  alpha: float = 0.05, beta: float = 0.05, tranche: int = 100, max_paires: int = 2000,
-                 seed: int = 0, suivi=None, **kw) -> dict:
+                 seed: int = 0, suivi=None, min_paires: int = 50, **kw) -> dict:
     """Test séquentiel : A est-il plus fort que B d'au moins elo1 (H1) ou pas plus que elo0
     (H0) ? Les paires sont jouées au fil de l'eau (lots pleins) ; le test est fait à chaque paire
-    terminée, jusqu'à la décision ou `max_paires`. `suivi(bilan)` est appelé toutes les
-    `tranche` paires terminées."""
+    terminée, jusqu'à la décision ou `max_paires` ; pas de décision avant `min_paires` paires
+    (l'approximation GSPRT ne vaut pas pour de tout petits échantillons). `suivi(bilan)` est appelé
+    toutes les `tranche` paires terminées."""
     import time as _time
     bas, haut = bornes_sprt(alpha, beta)
     t0 = _time.time()
@@ -446,7 +448,7 @@ def sprt_reseaux(chemin_a: str, chemin_b: str, elo0: float = 0.0, elo1: float = 
             return False
         etat["vues"] = n
         etat["llr"] = llr = llr_sprt(penta, elo0, elo1)
-        fini = llr <= bas or llr >= haut
+        fini = n >= min_paires and (llr <= bas or llr >= haut)
         if suivi is not None and (n % tranche == 0 or fini):
             suivi(resume(detail, {"llr": round(llr, 3), "bornes": (round(bas, 3), round(haut, 3)),
                                   "secondes": round(_time.time() - t0, 1)}))
@@ -454,8 +456,9 @@ def sprt_reseaux(chemin_a: str, chemin_b: str, elo0: float = 0.0, elo1: float = 
 
     r = match_reseaux(chemin_a, chemin_b, graines=graines_appariees(max_paires, seed), arret=arret, **kw)
     llr = llr_sprt(r["pentanomial"], elo0, elo1)
+    decide = r["paires"] >= min_paires
     r.update(llr=round(llr, 3), bornes=(round(bas, 3), round(haut, 3)),
-             decision="H1" if llr >= haut else ("H0" if llr <= bas else "indécis"))
+             decision="H1" if decide and llr >= haut else ("H0" if decide and llr <= bas else "indécis"))
     return r
 
 

@@ -26,6 +26,13 @@ from .base import Bot
 
 DEFAUTS = ["modeles/meilleur.pt", "runs/continu/modeles/meilleur.pt", "runs/principal/modeles/meilleur.pt"]
 PARALLELE_RUST = 16   # simulations par vague (perte virtuelle) de la recherche Rust du bot
+# (mesuré : sans coût à 800 simulations, −9 Elo [−44, +25])
+DRAFT_EXACT = 0       # > 0 : choix de carte exact au draft (tirages par répartition, rust/src/draft.rs)
+
+
+def agent_rust() -> dict:
+    """Réglages de la recherche Rust du bot et de l'analyse."""
+    return {"parallele": PARALLELE_RUST, "draft_exact": DRAFT_EXACT}
 _CACHE: dict[tuple, object] = {}
 _VERSIONS: dict[tuple, bool] = {}
 
@@ -114,7 +121,7 @@ class NeuralBot(Bot):
                 return mat["action"]
         if self.rust:
             from ..ia import rs
-            agent = {"parallele": PARALLELE_RUST}
+            agent = agent_rust()
             graine = self.rng.randrange(2**62)
             res = (rs.rechercher_temps(game, self.ev, self.temps, agent, graine) if self.temps
                    else rs.rechercher(game, self.ev, self.simulations, agent, graine))

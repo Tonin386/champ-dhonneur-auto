@@ -316,7 +316,7 @@ def test_tournoi_et_evaluations_rust(tmp_path):
     assert set(res) == {"m1", "m0bis"} and all(x["parties"] == 4 for x in res.values())
     assert all(len(x["releves"]) <= 1 for x in res.values())
     s = sprt_reseaux(a, b, max_paires=3, simulations=4, dispositif="cpu", compiler=False)
-    assert s["decision"] in ("H0", "H1", "indécis") and s["paires"] <= 3
+    assert s["decision"] == "indécis" and s["paires"] <= 3     # moins de min_paires paires
 
 
 @pytest.mark.parametrize("draft", [False, True])

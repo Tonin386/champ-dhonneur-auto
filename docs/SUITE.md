@@ -24,6 +24,9 @@
   l'ancienne recherche → signal faible, à confirmer par SPRT avant de l'activer en auto-jeu.
 - Vagues de 16 simulations (bot Rust) à 800 simulations : −9 [−44, +25] (150 paires) → sans coût
   mesurable : le bot profite pleinement de la vitesse de la recherche Rust.
+- Croyance sur la main adverse : la tête `main_adverse` (regles_v1_0234) ne fait que 5 % mieux que le
+  tirage hypergéométrique sur les pièces possibles (log-loss 0,598 contre 0,632) → peu d'information
+  sur la main au-delà de l'information publique ; déterminisations pondérées écartées.
 - Nouveau run : le réseau neuf bat glouton à 98 % dès l'itération 2 ; contre l'enseignant : 0,12 (it. 2),
   0,20 (it. 4).
 

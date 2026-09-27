@@ -66,9 +66,9 @@ def _analyser_rust(game: Game, bot, top: int, observateur: int | None, mat: dict
     le moteur Rust. L'horizon affiché est la longueur de la plus longue ligne principale."""
     import time
 
-    from ..bots.neural import PARALLELE_RUST
+    from ..bots.neural import agent_rust
     from . import rs
-    agent = {"parallele": PARALLELE_RUST}
+    agent = agent_rust()
     debut = time.monotonic()
     k = len(game.legal_actions())
 
