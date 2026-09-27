@@ -23,11 +23,17 @@ export function useCoups() {
   const n = useJeu(s => s.images.length);
   const piece = useJeu(s => s.piece);
   const caseChoisie = useJeu(s => s.caseChoisie);
+  const img = useJeu(s => s.images[s.pos]);
   return useMemo(() => {
     const tous = humain && pos === n - 1 ? legal : [];
-    const filtres = tous.filter(a => (piece === null || a.coin === piece) && (caseChoisie === null || a.cells.includes(caseChoisie)));
+    // une case choisie garde aussi les tactiques sans case de l'unité qui l'occupe (Fantassin :
+    // les deux Fantassins manœuvrent, sans case propre dans l'action)
+    const occupant = caseChoisie === null ? undefined : img?.u.find(u => u[1] === caseChoisie);
+    const surCase = (a: Legal) => a.cells.includes(caseChoisie!)
+      || (a.cells.length === 0 && a.kind === "tactic" && occupant !== undefined && occupant[2] === img!.t && occupant[3] === a.coin);
+    const filtres = tous.filter(a => (piece === null || a.coin === piece) && (caseChoisie === null || surCase(a)));
     return { tous, filtres };
-  }, [humain, legal, pos, n, piece, caseChoisie]);
+  }, [humain, legal, pos, n, piece, caseChoisie, img]);
 }
 
 /** Analyse automatique de la position affichée : quitter une position arrête son analyse (elle

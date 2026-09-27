@@ -103,7 +103,9 @@ def describe(game: Game, a: Action) -> str:
         SKIP: lambda: "Ne rien faire",
         RG_RESERVE: lambda: "Retirer une pièce de la réserve",
         RG_UNIT: lambda: "Retirer une pièce de la Garde royale",
-        TACTIC: lambda: f"Tactique {un} : {action_str(game, a)}",
+        TACTIC: lambda: (f"Tactique {un} : chaque Fantassin manœuvre ("
+                         + " et ".join(n[i] for i in sorted(game.units_of(game.to_move, "F"))) + ")"
+                         if a.unit == "F" else f"Tactique {un} : {action_str(game, a)}"),
     }[k]()
 
 
