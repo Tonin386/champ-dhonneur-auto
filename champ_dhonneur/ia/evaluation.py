@@ -446,10 +446,12 @@ def sprt_reseaux(chemin_a: str, chemin_b: str, elo0: float = 0.0, elo1: float = 
         n = sum(penta)
         if n == etat["vues"]:
             return False
+        # plusieurs paires peuvent se terminer au même pas : bilan à chaque multiple de `tranche` franchi
+        franchi = n // tranche > etat["vues"] // tranche
         etat["vues"] = n
         etat["llr"] = llr = llr_sprt(penta, elo0, elo1)
         fini = n >= min_paires and (llr <= bas or llr >= haut)
-        if suivi is not None and (n % tranche == 0 or fini):
+        if suivi is not None and (franchi or fini):
             suivi(resume(detail, {"llr": round(llr, 3), "bornes": (round(bas, 3), round(haut, 3)),
                                   "secondes": round(_time.time() - t0, 1)}))
         return fini
