@@ -312,7 +312,7 @@ def test_tournoi_et_evaluations_rust(tmp_path):
     assert len(r["matchs"]) == 6 and all(m["parties"] == 4 for m in r["matchs"].values())
     assert set(r["elo"]) == set(r["noms"])
     res = matchs_contre(a, [(b, {}, "m1"), (a, {"simulations": 4}, "m0bis")], paires=2, simulations=8,
-                        dispositif="cpu", compiler=False, releves=1, nom="m0")
+                        dispositif="cpu", compiler=False, releves=1, nom="m0", agent={"parallele": 4})
     assert set(res) == {"m1", "m0bis"} and all(x["parties"] == 4 for x in res.values())
     assert all(len(x["releves"]) <= 1 for x in res.values())
     s = sprt_reseaux(a, b, max_paires=3, simulations=4, dispositif="cpu", compiler=False)

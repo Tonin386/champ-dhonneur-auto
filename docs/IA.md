@@ -172,6 +172,7 @@ Valeurs par défaut du code ; `configs/gpu.json` les ajuste pour un GPU. Toutes 
 | `eval_meilleur` | true | le nouveau modèle affronte aussi le meilleur modèle (s'il n'est pas le précédent) |
 | `eval_precedent` | true | le nouveau modèle affronte la version évaluée précédente |
 | `eval_paires_reseaux` | 100 | paires des matchs contre un réseau (moteur Rust) ; `eval_paires` reste celui des bots |
+| `eval_parallele` | 1 | feuilles évaluées ensemble par recherche dans ces matchs : 4 à 8 divisent d'autant les appels au réseau (évaluation limitée par la latence du GPU) |
 | `eval_promotion` | elo | `elo` : meilleur.pt = meilleur Elo ; `ic` : promu seulement s'il bat le meilleur (borne basse de l'IC 95 % > 0) |
 | `autojeu_reseau` | dernier | réseau de l'auto-jeu : `dernier` (le plus récent) ou `meilleur` (le meilleur démontré, `meilleur.pt`) |
 | `reinit_tous`, `reinit_reutilisation` | 0, 4 | toutes les N itérations, réseau neuf entraîné depuis zéro sur la fenêtre (voir « Plasticité ») |

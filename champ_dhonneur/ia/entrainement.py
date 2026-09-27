@@ -99,6 +99,10 @@ class ConfigEntrainement:
     eval_precedent: bool = True      # affronter la version évaluée précédente
     # paires des matchs contre un réseau (moteur Rust, bien plus rapide que les matchs contre les bots)
     eval_paires_reseaux: int = 100
+    # feuilles évaluées ensemble par recherche dans ces matchs (1 : une à une). Avec quelques
+    # centaines de parties, les lots sont petits et l'évaluation attend le GPU à chaque simulation :
+    # 4 à 8 divisent d'autant le nombre d'appels au réseau
+    eval_parallele: int = 1
     # promotion de meilleur.pt : "elo" (meilleur Elo Bradley-Terry, sans marge) ou "ic" (le nouveau
     # modèle bat le meilleur, borne basse de l'intervalle de confiance à 95 % de l'écart > 0)
     eval_promotion: str = "elo"
@@ -727,7 +731,8 @@ class Entraineur:
             resultats = matchs_contre(
                 chemin, [(*spec_reseau(spec), nom_adv) for spec, nom_adv in reseaux],
                 cfg.eval_paires_reseaux, 10_000 + it, cfg.eval_simulations, str(self.dev),
-                cfg.eval_protocole, cfg.releves_evaluation, cfg.inference_compilee, nom)
+                cfg.eval_protocole, cfg.releves_evaluation, cfg.inference_compilee, nom,
+                agent={"parallele": cfg.eval_parallele} if cfg.eval_parallele > 1 else None)
             for (spec, nom_adv), f in zip(bots, futurs):
                 resultats[nom_adv] = f.result()
             for spec, nom_adv in bots[len(futurs):]:

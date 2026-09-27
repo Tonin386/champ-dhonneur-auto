@@ -405,15 +405,19 @@ def match_reseaux(chemin_a: str, chemin_b: str, paires: int = 200, seed: int = 0
 def matchs_contre(chemin: str, adversaires: list[tuple[str, dict, str]], paires: int = 100,
                   seed: int = 0, simulations: int = 128, dispositif: str = "cuda",
                   protocole: str = "draft", releves: int = 0, compiler: bool = True,
-                  nom: str = "candidat", simultanees: int = 1024) -> dict[str, dict]:
+                  nom: str = "candidat", simultanees: int = 1024,
+                  agent: dict | None = None) -> dict[str, dict]:
     """Le réseau `chemin` contre plusieurs réseaux [(chemin, réglages de recherche, nom)], en
     matchs appariés sur les mêmes graines, joués ensemble dans un seul match Rust (lots pleins,
-    une seule fin de match). Renvoie le bilan de chaque match (du point de vue de `chemin`)."""
+    une seule fin de match). Renvoie le bilan de chaque match (du point de vue de `chemin`).
+    `agent` : réglages de recherche communs à tous les agents (ex. {"parallele": 4})."""
     from . import rs
     if not adversaires:
         return {}
+    base = agent or {}
     evs, agents = _agents_reseaux([chemin] + [c for c, _, _ in adversaires],
-                                  [{}] + [r for _, r, _ in adversaires], simulations, dispositif, compiler)
+                                  [base] + [{**base, **r} for _, r, _ in adversaires], simulations,
+                                  dispositif, compiler)
     graines = graines_appariees(paires, seed)
     parties = [p for g in graines for k in range(1, len(agents)) for p in ((g, 0, k), (g, k, 0))]
     noms = [nom] + [n for _, _, n in adversaires]
