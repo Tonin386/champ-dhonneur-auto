@@ -454,21 +454,25 @@ class Entraineur:
         return x, y
 
     def _pertes_aux(self, aux: dict, y: dict) -> dict:
-        """Pertes des têtes auxiliaires (entropies croisées), absentes si les cibles manquent."""
+        """Pertes des têtes auxiliaires (entropies croisées), absentes si les cibles manquent.
+        Moyennes masquées par pondération (pas de sélection booléenne : aucune synchronisation
+        avec le GPU)."""
         F = self.torch.nn.functional
         out = {}
         if "lieux" in y:
             t = y["lieux"]
-            out["lieux"] = F.cross_entropy(aux["lieux"].float().reshape(-1, 3), t.reshape(-1).clamp_min(0),
-                                           reduction="none").reshape(t.shape)[t >= 0].mean()
+            ce = F.cross_entropy(aux["lieux"].float().reshape(-1, 3), t.reshape(-1).clamp_min(0),
+                                 reduction="none").reshape(t.shape)
+            w = (t >= 0).float()
+            out["lieux"] = (ce * w).sum() / w.sum().clamp_min(1.0)
         if "marge" in y:
             out["marge"] = F.cross_entropy(aux["marge"].float(), y["marge"] + 4)
         if "main_adv" in y:
-            jeu = ~y["draft"]
-            if jeu.any():
-                m = aux["main"][jeu].float()
-                out["main_adverse"] = F.cross_entropy(m.reshape(-1, m.shape[-1]),
-                                                      y["main_adv"][jeu].clamp(0, m.shape[-1] - 1).reshape(-1))
+            w = (~y["draft"]).float()
+            m = aux["main"].float()
+            ce = F.cross_entropy(m.reshape(-1, m.shape[-1]), y["main_adv"].clamp(0, m.shape[-1] - 1).reshape(-1),
+                                 reduction="none").reshape(m.shape[:2]).mean(-1)
+            out["main_adverse"] = (ce * w).sum() / w.sum().clamp_min(1.0)
         return out
 
     def valider(self, data: dict, maximum: int = 4096) -> dict:
@@ -616,7 +620,10 @@ class Entraineur:
             n_pas = max(1, math.ceil(n_nouveaux * cfg.reutilisation / cfg.lot))
         rng = np.random.default_rng(cfg.graine * 7 + it)
         self.model.train()
+        # cumuls gardés sur le GPU (lus une fois à la fin) : pas de synchronisation à chaque pas
         cumul = {"perte_politique": 0.0, "perte_valeur": 0.0, "entropie": 0.0, "precision_valeur": 0.0}
+        params_ema = list(self.ema.parameters()) if self.ema is not None else []
+        params = list(self.model.parameters())
         poids_aux = {k: v for k, v in (cfg.poids_aux or {}).items() if v}
         amp = self.dev.type == "cuda"
         # bf16 sur GPU récents (Ampere+), sinon fp16 avec mise à l'échelle des gradients
@@ -659,22 +666,21 @@ class Entraineur:
                 with torch.no_grad():   # moyenne mobile, avec démarrage progressif
                     n = i_pas if ema_depuis_zero else self.etat["pas"]
                     dec = min(cfg.ema, (1 + n) / (10 + n))
-                    for pe, pm in zip(self.ema.parameters(), self.model.parameters()):
-                        pe.lerp_(pm, 1 - dec)
+                    torch._foreach_lerp_(params_ema, params, 1 - dec)
             with torch.no_grad():
                 p = torch.softmax(logits.masked_fill(~mask, -1e9), -1)
                 ent = -(p * logp.masked_fill(~mask, 0.0)).sum(-1).mean()
                 pv = torch.softmax(vlog, -1)
                 v = pv[:, 0] - pv[:, 2]
                 prec = ((v.sign() == z.sign()) | ((z == 0) & (v.abs() < 0.3))).float().mean()
-            cumul["perte_politique"] += l_pol.item()
-            cumul["perte_valeur"] += l_val.item()
-            cumul["entropie"] += ent.item()
-            cumul["precision_valeur"] += prec.item()
-            for k, l in pertes_aux.items():
-                cumul[f"perte_{k}"] = cumul.get(f"perte_{k}", 0.0) + l.item()
+                cumul["perte_politique"] += l_pol.detach()
+                cumul["perte_valeur"] += l_val.detach()
+                cumul["entropie"] += ent
+                cumul["precision_valeur"] += prec
+                for k, l in pertes_aux.items():
+                    cumul[f"perte_{k}"] = cumul.get(f"perte_{k}", 0.0) + l.detach()
         self.model.eval()
-        out = {k: v / n_pas for k, v in cumul.items()}
+        out = {k: float(v) / n_pas for k, v in cumul.items()}
         out["pas"] = n_pas
         out["lr"] = lr(n_pas - 1) if lr is not None else self.lr_actuel(it)
         return out

@@ -40,7 +40,7 @@
  "melange_q": 0.25,
  "dispositif": "cuda",
  "dispositif_autojeu": "cuda",
- "compiler": false,
+ "compiler": true,
  "eval_tous": 2,
  "eval_meilleur": true,
  "travailleurs_evaluation": 3,

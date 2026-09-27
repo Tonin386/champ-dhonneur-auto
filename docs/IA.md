@@ -166,7 +166,7 @@ Valeurs par défaut du code ; `configs/gpu.json` les ajuste pour un GPU. Toutes 
 | `reutilisation` | 4 | nombre moyen de passages par exemple |
 | `poids_valeur`, `melange_q` | 1,0, 0,25 | poids de la perte de valeur ; part de la valeur de recherche dans sa cible |
 | `dispositif`, `dispositif_autojeu` | auto | `cuda`, `cpu` ou `auto` |
-| `compiler` | false | `torch.compile` |
+| `compiler` | false | `torch.compile` de l'apprentissage : −30 % de temps par pas mesuré (RTX 3070, d=160), ≈ 100 s de compilation par processus |
 | `eval_tous`, `eval_paires`, `eval_simulations` | 5, 24, 64 | fréquence et taille des matchs d'évaluation |
 | `eval_ancres` | glouton | adversaires fixes : `glouton`, `heur:64`, `mcts:800`… |
 | `eval_meilleur` | true | le nouveau modèle affronte aussi le meilleur modèle (s'il n'est pas le précédent) |
@@ -178,7 +178,7 @@ Valeurs par défaut du code ; `configs/gpu.json` les ajuste pour un GPU. Toutes 
 | `reinit_tous`, `reinit_reutilisation` | 0, 4 | toutes les N itérations, réseau neuf entraîné depuis zéro sur la fenêtre (voir « Plasticité ») |
 | `reinit_modele` | {} | architecture du réseau neuf des réinitialisations (ex. `{"d": 192, "tetes": 6}`) ; promu seulement s'il bat le meilleur |
 | `valeur_lambda` | 0 | > 0 : retours TD(λ) à la place de la valeur de recherche dans la cible de valeur |
-| `inference_compilee` | false | réseau compilé (`torch.compile`, graphes CUDA) pour l'auto-jeu et les matchs Rust : +40 % de positions/s sur RTX 3070 |
+| `inference_compilee` | false | réseau compilé (`torch.compile`, graphes CUDA) pour l'auto-jeu et les matchs Rust : +40 % de positions/s sur RTX 3070. Lots complétés jusqu'au palier suivant (128, 256, 384, 512, 768…) : `autojeu.simultanees` égal à un palier évite de calculer des positions factices |
 | `travailleurs_evaluation` | 0 | processus des évaluations (0 = `travailleurs`) ; utile avec le moteur Rust, qui sature le GPU avec peu de processus |
 | `moteur_autojeu` | auto | `auto` (Rust si le module `champ_rs` est compilé), `rust` ou `python` |
 | `iterations` = 0, `lr_horizon` | —, 0 | entraînement sans fin ; décroissance du taux d'apprentissage sur `lr_horizon` itérations, puis `lr_min` |
